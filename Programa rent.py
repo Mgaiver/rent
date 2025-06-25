@@ -113,7 +113,7 @@ if dados_resultado:
 
     # Exportar para Excel
     output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_resultado.to_excel(writer, index=False, sheet_name="Operações")
         writer.save()
         st.download_button(
