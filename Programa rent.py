@@ -111,16 +111,16 @@ if dados_resultado:
     st.success(f"**Lucro/Prejuízo total:** R$ {lucro_total:.2f}")
     st.success(f"**Rentabilidade total:** {rentabilidade_total:.2f}%")
 
-    # Exportar para Excel
+    # Exportar para Excel (corrigido)
     output = BytesIO()
-with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_resultado.to_excel(writer, index=False, sheet_name="Operações")
-        writer.save()
-        st.download_button(
-            label="📥 Baixar Excel das operações",
-            data=output.getvalue(),
-            file_name="analise_operacoes.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+
+    st.download_button(
+        label="📥 Baixar Excel das operações",
+        data=output.getvalue(),
+        file_name="analise_operacoes.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 else:
     st.info("Adicione uma operação para visualizar os resultados.")
