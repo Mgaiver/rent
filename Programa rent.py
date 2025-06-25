@@ -2,9 +2,10 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-st.set_page_config(page_title="Análise de Operações", layout="wide")
+st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
 
-st.title("📊 Analisador de Operações com Ações")
+st.title("🔁 Analisador de Long & Short")
+st.caption("Compare preços de entrada e mercado para avaliar operações individuais e o consolidado.")
 
 # Função para buscar preço atual
 def preco_atual(ticker):
@@ -16,28 +17,36 @@ def preco_atual(ticker):
         if historico.empty:
             return None
         return historico["Close"].iloc[-1]
-    except:
+    except Exception as e:
+        st.warning(f"Erro ao buscar {ticker}: {e}")
         return None
 
 # Entrada de dados
 with st.form("form_operacao"):
     col1, col2, col3 = st.columns(3)
     with col1:
-        ativo = st.text_input("Ativo (ex: PETR4)", "")
+        ativo = st.text_input("Ativo (ex: PETR4)", "").strip().upper()
         tipo = st.selectbox("Tipo de operação", ["Compra", "Venda"])
     with col2:
         quantidade = st.number_input("Quantidade executada", step=100, min_value=1)
-        preco_exec = st.number_input("Preço de execução", step=0.01, format="%.2f", min_value=0.0)
+        preco_exec = st.number_input(
+            "Preço de execução (por ação)", 
+            step=0.01, 
+            format="%.2f", 
+            min_value=0.01, 
+            max_value=1000.0, 
+            help="Digite o valor por ação, e não o valor total da ordem."
+        )
     submit = st.form_submit_button("Adicionar operação")
 
 # Inicializa sessão
 if "operacoes" not in st.session_state:
     st.session_state.operacoes = []
 
-# Adiciona a operação
+# Adiciona operação
 if submit and ativo and preco_exec > 0:
     st.session_state.operacoes.append({
-        "ativo": ativo.upper(),
+        "ativo": ativo,
         "tipo": "c" if tipo == "Compra" else "v",
         "quantidade": quantidade,
         "preco_exec": preco_exec
@@ -65,13 +74,13 @@ for op in st.session_state.operacoes:
         lucro = (preco_exec - preco) * qtd
 
     lucro_total += lucro
-    perc = (lucro / valor_operacao) * 100
+    perc = (lucro / valor_operacao) * 100 if valor_operacao > 0 else 0
 
     dados_resultado.append({
         "Ativo": op["ativo"],
         "Tipo": "Compra" if tipo == "c" else "Venda",
         "Qtd": qtd,
-        "Preço Exec.": preco_exec,
+        "Preço Exec.": round(preco_exec, 2),
         "Preço Atual": round(preco, 2),
         "Lucro/Prejuízo (R$)": round(lucro, 2),
         "Variação (%)": round(perc, 2)
