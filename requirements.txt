@@ -1,7 +1,5 @@
 streamlit
-yfinance
 pandas
+yfinance
 xlsxwriter
-datetime
-BytesIO
 streamlit-autorefresh
