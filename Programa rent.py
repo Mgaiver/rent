@@ -5,184 +5,211 @@ from io import BytesIO
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
+# --- Configurações da Página ---
 st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
 st.title("🔁 Analisador de Long & Short")
 
-# Atualização automática a cada 8 segundos
-st_autorefresh(interval=8000, key="refresh")
+# --- Atualização Automática ---
+# Atualiza a página a cada 8 segundos para obter os preços mais recentes
+st_autorefresh(interval=8000, key="datarefresh")
 
-# Função para buscar preço atual + nome da empresa
-def preco_atual(ticker):
+# --- Funções ---
+def get_stock_data(ticker):
+    """
+    Busca o preço de fechamento mais recente e o nome da empresa para um determinado ticker.
+    Adiciona o sufixo ".SA" se não estiver presente.
+    """
     try:
+        # Garante que o ticker tem o sufixo .SA para a B3
         if not ticker.endswith(".SA"):
             ticker += ".SA"
-        dados = yf.Ticker(ticker)
-        historico = dados.history(period="1d")
-        nome_empresa = dados.info.get("longName", "")
-        if historico.empty:
-            return None, nome_empresa
-        return historico["Close"].iloc[-1], nome_empresa
+        
+        stock = yf.Ticker(ticker)
+        # Pega o histórico do último dia
+        history = stock.history(period="1d")
+        # Pega o nome completo da empresa
+        company_name = stock.info.get("longName", "N/A")
+        
+        if history.empty:
+            return None, company_name
+        
+        # Retorna o último preço de fechamento e o nome da empresa
+        return history["Close"].iloc[-1], company_name
     except Exception as e:
+        st.error(f"Não foi possível buscar dados para o ativo {ticker}. Erro: {e}")
         return None, ""
 
-# CSS customizado para destacar botão selecionado e colorir linhas
+# --- CSS Customizado ---
+# Estilos para colorir as linhas da tabela de operações com base no lucro/prejuízo
 st.markdown("""
     <style>
-    .selected-compra button {
-        background-color: #28a745 !important;
-        color: white !important;
-    }
-    .selected-venda button {
-        background-color: #dc3545 !important;
-        color: white !important;
-    }
     .linha-verde {
-        background-color: #e6f4ea;
-        border-radius: 6px;
-        padding: 5px;
+        background-color: rgba(40, 167, 69, 0.15); /* Verde claro com transparência */
+        border-left: 5px solid #28a745; /* Borda verde à esquerda */
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 8px;
     }
     .linha-vermelha {
-        background-color: #fdecea;
-        border-radius: 6px;
-        padding: 5px;
+        background-color: rgba(220, 53, 69, 0.1); /* Vermelho claro com transparência */
+        border-left: 5px solid #dc3545; /* Borda vermelha à esquerda */
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 8px;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# Inicializa sessão
+# --- Inicialização do Estado da Sessão ---
 if "operacoes" not in st.session_state:
     st.session_state.operacoes = []
-if "tipo_operacao" not in st.session_state:
-    st.session_state.tipo_operacao = None
 
-# Entrada de dados
+# --- Formulário de Entrada de Operação ---
 with st.form("form_operacao"):
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    st.subheader("Adicionar Nova Operação")
+    cols = st.columns([2, 1, 1, 1.5])
+    
+    with cols[0]:
         ativo = st.text_input("Ativo (ex: PETR4)", "").strip().upper()
-        col1a, col1b = st.columns(2)
+    
+    with cols[1]:
+        tipo_operacao = st.radio("Tipo", ["Compra", "Venda"], horizontal=True, label_visibility="collapsed")
 
-        compra_btn_class = "selected-compra" if st.session_state.tipo_operacao == "Compra" else ""
-        venda_btn_class = "selected-venda" if st.session_state.tipo_operacao == "Venda" else ""
-
-        with col1a:
-            if st.form_submit_button("🟢 Compra", type="secondary"):
-                st.session_state.tipo_operacao = "Compra"
-        with col1b:
-            if st.form_submit_button("🔴 Venda", type="secondary"):
-                st.session_state.tipo_operacao = "Venda"
-
-        st.markdown(f"""
-            <div class="{compra_btn_class}"></div>
-            <div class="{venda_btn_class}"></div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        quantidade = st.number_input("Quantidade executada", step=100, min_value=1)
+    with cols[2]:
+        quantidade = st.number_input("Quantidade", step=100, min_value=1)
+    
+    with cols[3]:
         preco_exec = st.number_input(
-            "Preço de execução (por ação)",
+            "Preço de Execução (R$)",
             step=0.01,
             format="%.2f",
             min_value=0.01,
-            max_value=1000.0,
             help="Digite o valor por ação, e não o valor total da ordem."
         )
-    with col3:
-        data_operacao = st.date_input("Data da operação", datetime.now().date(), format="%d/%m/%Y")
+    
+    # O date_input fica fora das colunas para ocupar a largura total
+    data_operacao = st.date_input(
+        "Data da Operação",
+        datetime.now(),
+        format="DD/MM/YYYY"  # CORREÇÃO: Usar o formato esperado pelo Streamlit
+    )
 
-    submit = st.form_submit_button("Adicionar operação")
+    submitted = st.form_submit_button("➕ Adicionar Operação", use_container_width=True)
 
-# Adiciona operação
-if submit and ativo and preco_exec > 0 and st.session_state.tipo_operacao:
+# --- Lógica de Adição de Operação ---
+if submitted and ativo and preco_exec > 0 and tipo_operacao:
     st.session_state.operacoes.append({
         "ativo": ativo,
-        "tipo": "c" if st.session_state.tipo_operacao == "Compra" else "v",
+        "tipo": "c" if tipo_operacao == "Compra" else "v",
         "quantidade": quantidade,
         "preco_exec": preco_exec,
         "data": data_operacao.strftime("%d/%m/%Y")
     })
-    st.session_state.tipo_operacao = None
+    st.rerun() # Recarrega a página para atualizar a lista
 
-# Botão para resetar todas as operações
-if st.button("🧹 Resetar todas as operações"):
-    st.session_state.operacoes.clear()
-    st.experimental_rerun()
-
-# Exibir operações com botão de excluir
-dados_resultado = []
-lucro_total = 0
-valor_total = 0
-
+# --- Exibição das Operações ---
 if st.session_state.operacoes:
-    st.subheader("📋 Operações adicionadas")
-    for i, op in enumerate(st.session_state.operacoes):
-        preco, nome_empresa = preco_atual(op["ativo"])
-        if preco is None:
+    st.subheader("📋 Operações Adicionadas")
+    
+    # Header da tabela de operações
+    cols_header = st.columns([1.5, 1, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
+    headers = ["Ativo", "Tipo", "Qtd.", "Preço Exec.", "Preço Atual", "Lucro/Prej.", "%", "Data", ""]
+    for col, header in zip(cols_header, headers):
+        col.markdown(f"**{header}**")
+    
+    dados_para_df = []
+    
+    # Itera sobre uma cópia da lista para permitir a exclusão segura
+    for i, op in enumerate(st.session_state.operacoes[:]):
+        preco_atual, nome_empresa = get_stock_data(op["ativo"])
+        
+        if preco_atual is None:
+            st.warning(f"Não foi possível obter o preço atual de {op['ativo']}. A operação não será exibida.")
             continue
 
         qtd = op["quantidade"]
         preco_exec = op["preco_exec"]
         tipo = op["tipo"]
         valor_operacao = qtd * preco_exec
-        lucro = (preco - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco) * qtd
+        lucro = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
         perc = (lucro / valor_operacao) * 100 if valor_operacao > 0 else 0
-        cor = "green" if lucro > 0 else "red"
-        classe_linha = "linha-verde" if lucro > 0 else "linha-vermelha"
+        cor = "green" if lucro >= 0 else "red"
+        classe_linha = "linha-verde" if lucro >= 0 else "linha-vermelha"
 
+        # Container para cada linha de operação
         with st.container():
             st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
-            col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns([1.2, 1.2, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
+            cols_data = st.columns([1.5, 1, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
+            
+            cols_data[0].markdown(f"<span title='{nome_empresa}'>{op['ativo']}</span>", unsafe_allow_html=True)
+            cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
+            cols_data[2].write(qtd)
+            cols_data[3].write(f"R$ {preco_exec:.2f}")
+            cols_data[4].write(f"R$ {preco_atual:.2f}")
+            cols_data[5].markdown(f"<b style='color:{cor};'>R$ {lucro:,.2f}</b>", unsafe_allow_html=True)
+            cols_data[6].markdown(f"<b style='color:{cor};'>{perc:.2f}%</b>", unsafe_allow_html=True)
+            cols_data[7].write(op["data"])
 
-            col1.markdown(f"<span title='{nome_empresa}'>{op['ativo']}</span>", unsafe_allow_html=True)
-            col2.write("Compra" if tipo == "c" else "Venda")
-            col3.write(qtd)
-            col4.write(f"R$ {preco_exec:.2f}")
-            col5.write(f"R$ {preco:.2f}")
-            col6.markdown(f"<span style='color:{cor};'>R$ {lucro:.2f}</span>", unsafe_allow_html=True)
-            col7.markdown(f"<span style='color:{cor};'>{perc:.2f}%</span>", unsafe_allow_html=True)
-            col8.write(op["data"])
-
-            if col9.button("🗑️", key=f"del_{i}"):
+            # Botão de exclusão
+            if cols_data[8].button("🗑️", key=f"del_{i}", help="Excluir operação"):
                 st.session_state.operacoes.pop(i)
-                st.experimental_rerun()
+                st.rerun() # CORREÇÃO: Substitui st.experimental_rerun()
 
             st.markdown("</div>", unsafe_allow_html=True)
-
-        dados_resultado.append({
-            "Ativo": op["ativo"],
-            "Tipo": "Compra" if tipo == "c" else "Venda",
-            "Data": op["data"],
-            "Qtd": qtd,
-            "Preço Exec.": round(preco_exec, 2),
-            "Preço Atual": round(preco, 2),
-            "Lucro/Prejuízo (R$)": round(lucro, 2),
-            "Variação (%)": round(perc, 2)
+        
+        # Adiciona dados para o DataFrame consolidado
+        dados_para_df.append({
+            "Ativo": op["ativo"], "Tipo": "Compra" if tipo == "c" else "Venda", "Data": op["data"],
+            "Qtd": qtd, "Preço Exec.": preco_exec, "Preço Atual": preco_atual,
+            "Lucro/Prejuízo (R$)": lucro, "Variação (%)": perc
         })
 
-# Exibir resultado consolidado
-if dados_resultado:
-    st.markdown("### 📈 Resultado Consolidado:")
-    df_resultado = pd.DataFrame(dados_resultado)
-    for op in st.session_state.operacoes:
-        valor_total += op["quantidade"] * op["preco_exec"]
-    lucro_total = df_resultado["Lucro/Prejuízo (R$)"].sum()
-    rentabilidade_total = (lucro_total / valor_total) * 100 if valor_total > 0 else 0
+    # --- Resultado Consolidado e Exportação ---
+    if dados_para_df:
+        st.markdown("---")
+        st.subheader("📈 Resultado Consolidado")
+        
+        df_resultado = pd.DataFrame(dados_para_df)
+        
+        # Calcula totais
+        lucro_total = df_resultado["Lucro/Prejuízo (R$)"].sum()
+        valor_total_investido = (df_resultado["Qtd"] * df_resultado["Preço Exec."]).sum()
+        rentabilidade_total = (lucro_total / valor_total_investido) * 100 if valor_total_investido > 0 else 0
+        
+        # Exibe o DataFrame
+        st.dataframe(df_resultado.style.applymap(
+            lambda v: f"color: {'green' if v >= 0 else 'red'}", subset=["Lucro/Prejuízo (R$)", "Variação (%)"]
+        ).format({
+            "Preço Exec.": "R$ {:,.2f}", "Preço Atual": "R$ {:,.2f}", 
+            "Lucro/Prejuízo (R$)": "R$ {:,.2f}", "Variação (%)": "{:,.2f}%"
+        }), use_container_width=True)
+        
+        # Exibe métricas de resumo
+        cols_metricas = st.columns(2)
+        cor_lucro = "green" if lucro_total >= 0 else "red"
+        cols_metricas[0].metric(
+            label="Lucro/Prejuízo Total",
+            value=f"R$ {lucro_total:,.2f}",
+            delta=f"{rentabilidade_total:,.2f}% sobre o total investido",
+            delta_color="normal" if cor_lucro == "green" else "inverse"
+        )
+        
+        # Exportar para Excel
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_resultado.to_excel(writer, index=False, sheet_name="Operacoes")
+        
+        st.download_button(
+            label="📥 Baixar Planilha Excel",
+            data=output.getvalue(),
+            file_name=f"analise_operacoes_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
-    st.dataframe(df_resultado, use_container_width=True)
-
-    st.success(f"**Lucro/Prejuízo total:** R$ {lucro_total:.2f}")
-    st.success(f"**Rentabilidade total:** {rentabilidade_total:.2f}%")
-
-    # Exportar para Excel
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_resultado.to_excel(writer, index=False, sheet_name="Operações")
-
-    st.download_button(
-        label="📥 Baixar Excel das operações",
-        data=output.getvalue(),
-        file_name="analise_operacoes.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    # Botão para resetar todas as operações
+    if st.button("🧹 Limpar Todas as Operações", use_container_width=True):
+        st.session_state.operacoes.clear()
+        st.rerun()
 else:
-    st.info("Adicione uma operação para visualizar os resultados.")
+    st.info("Adicione uma operação no formulário acima para começar a análise.")
