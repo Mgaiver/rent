@@ -1,5 +1,7 @@
 streamlit
 pandas
 yfinance
-xlsxwriter
 streamlit-autorefresh
+google-cloud-firestore
+google-auth-oauthlib
+xlsxwriter
