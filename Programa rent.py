@@ -197,13 +197,13 @@ else:
                     st.error(f"Ativo {op['ativo']}: {nome_empresa_ou_erro}")
                     continue
                 
-                # LÓGICA DE ALERTA DE STOP MELHORADA
+                # LÓGICA DE ALERTA DE STOP CORRIGIDA
                 gain_atingido, loss_atingido = False, False
                 sg, sl = op.get('stop_gain', 0), op.get('stop_loss', 0)
-                if op['tipo'] == 'c': # Compra
+                if op['tipo'] == 'c': # Lógica para COMPRA
                     if sg > 0 and preco_atual >= sg: gain_atingido = True
                     if sl > 0 and preco_atual <= sl: loss_atingido = True
-                else: # Venda
+                else: # Lógica para VENDA (inversa)
                     if sg > 0 and preco_atual <= sg: gain_atingido = True
                     if sl > 0 and preco_atual >= sl: loss_atingido = True
 
@@ -213,7 +213,6 @@ else:
                 lucro_liquido = lucro_bruto - custo
                 perc_liquido = (lucro_liquido / valor_operacao) * 100 if valor_operacao > 0 else 0
                 
-                # DEFINE A CLASSE DA LINHA COM BASE NOS NOVOS ALVOS
                 if gain_atingido:
                     classe_linha = "linha-gain"
                 elif loss_atingido:
@@ -224,7 +223,6 @@ else:
                 with st.container():
                     st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
                     
-                    # MENSAGEM DE ALVO NO TOPO DA OPERAÇÃO
                     if gain_atingido:
                         st.success(f"🎯 GAIN ATINGIDO: Alvo de R$ {sg:,.2f} alcançado!")
                     if loss_atingido:
