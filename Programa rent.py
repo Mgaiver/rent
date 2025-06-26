@@ -22,28 +22,6 @@ st.title("🔁 Analisador de Long & Short")
 st_autorefresh(interval=8000, key="datarefresh")
 
 # --- Configuração do Firebase/Firestore ---
-# Para a persistência de dados funcionar, siga estes passos:
-# 1. Crie um projeto no Google Cloud/Firebase: https://firebase.google.com/
-# 2. Ative o serviço Firestore.
-# 3. Crie uma chave de conta de serviço (Service Account) com permissões de "Editor do Cloud Datastore".
-# 4. Baixe o arquivo JSON da chave.
-# 5. Se estiver rodando o app no Streamlit Cloud, adicione o conteúdo do arquivo JSON
-#    aos segredos (Secrets) do seu app com a chave "firebase_credentials".
-#
-# Exemplo de como formatar o segredo em TOML (o erro "Invalid TOML" é comum aqui):
-#
-# [firebase_credentials]
-# type = "service_account"
-# project_id = "seu-project-id"
-# private_key_id = "..."
-#
-# # IMPORTANTE: O valor da 'private_key' deve ser envolvido por TRÊS aspas duplas (""").
-# # Copie a chave do seu JSON e cole entre as três aspas.
-# private_key = """-----BEGIN PRIVATE KEY-----\nMII...etc...\n-----END PRIVATE KEY-----\n"""
-#
-# client_email = "..."
-# # ... copie todo o resto do seu arquivo JSON, mantendo o formato chave = "valor"
-
 @st.cache_resource
 def init_firestore():
     """Inicializa a conexão com o Firestore usando as credenciais dos segredos do Streamlit."""
@@ -60,7 +38,6 @@ def init_firestore():
         return None
 
 db = init_firestore()
-# ID do documento para salvar os dados. Em um app real, isso poderia ser dinâmico por usuário.
 DOC_ID = "dados_todos_clientes_v1"
 COLLECTION_NAME = "analisador_ls_data"
 
@@ -69,7 +46,6 @@ def save_data_to_firestore(db_client, data):
     if db_client is None: return
     try:
         doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID)
-        # Garante que os dados são serializáveis em JSON antes de enviar
         serializable_data = json.loads(json.dumps(data, default=str))
         doc_ref.set({"clientes": serializable_data})
     except Exception as e:
@@ -89,20 +65,33 @@ def load_data_from_firestore(db_client):
         return {}
 
 # --- Funções do App ---
-@st.cache_data
 def get_stock_data(ticker):
-    """Busca o preço de fechamento mais recente e o nome da empresa."""
+    """
+    Busca o preço de fechamento mais recente e o nome da empresa.
+    O cache foi removido para garantir que o preço seja sempre o mais recente.
+    """
     try:
         if not ticker.endswith(".SA"):
             ticker += ".SA"
         stock = yf.Ticker(ticker)
+        info = stock.info
+        company_name = info.get("longName", "N/A")
+
+        # CORREÇÃO: Prioriza o 'currentPrice' que é mais atual, especialmente fora do pregão.
+        # Se não disponível, usa o fechamento do histórico como fallback.
+        current_price = info.get('currentPrice')
+        if current_price:
+            return current_price, company_name
+        
         history = stock.history(period="1d")
-        company_name = stock.info.get("longName", "N/A")
-        if history.empty:
-            return None, company_name
-        return history["Close"].iloc[-1], company_name
+        if not history.empty:
+            return history["Close"].iloc[-1], company_name
+
+        # Se ambos os métodos falharem
+        return None, f"Não foi possível obter preço para {ticker}"
     except Exception as e:
         return None, str(e)
+
 
 # --- FEEDBACK DE CONEXÃO COM O BANCO DE DADOS (VISÍVEL NO TOPO) ---
 if db:
@@ -168,7 +157,6 @@ else:
                 save_data_to_firestore(db, st.session_state.clientes)
                 st.rerun()
         
-        # --- SEÇÃO DE MÉTRICAS FINANCEIRAS DO CLIENTE (COM DESTAQUE) ---
         if operacoes:
             st.markdown("##### 💵 Resumo Financeiro da Carteira")
             total_comprado = sum(op['quantidade'] * op['preco_exec'] for op in operacoes if op['tipo'] == 'c')
@@ -194,7 +182,6 @@ else:
                 st.error(f"Ativo {op['ativo']} do cliente {cliente}: {nome_empresa_ou_erro}")
                 continue
             qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
-            # --- CUSTO ALTERADO PARA 1% ---
             valor_operacao, custo = qtd * preco_exec, (qtd * preco_exec) * 0.01
             lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
             lucro_liquido, perc_liquido = lucro_bruto - custo, ((lucro_bruto - custo) / valor_operacao) * 100 if valor_operacao > 0 else 0
@@ -204,7 +191,7 @@ else:
                 st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
                 cols_data = st.columns([1.5, 1, 1, 1.3, 1.3, 1.2, 1.5, 1.2, 1.2, 0.5])
                 cols_data[0].markdown(f"<span title='{nome_empresa_ou_erro}'>{op['ativo']}</span>", unsafe_allow_html=True)
-                cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
+                cols_data[1].write("🟢 Compra" if tipo == "c" else "� Venda")
                 cols_data[2].write(f"{qtd:,}")
                 cols_data[3].write(f"R$ {preco_exec:,.2f}")
                 cols_data[4].write(f"R$ {preco_atual:,.2f}")
