@@ -194,7 +194,8 @@ else:
                 st.error(f"Ativo {op['ativo']} do cliente {cliente}: {nome_empresa_ou_erro}")
                 continue
             qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
-            valor_operacao, custo = qtd * preco_exec, (qtd * preco_exec) * 0.005
+            # --- CUSTO ALTERADO PARA 1% ---
+            valor_operacao, custo = qtd * preco_exec, (qtd * preco_exec) * 0.01
             lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
             lucro_liquido, perc_liquido = lucro_bruto - custo, ((lucro_bruto - custo) / valor_operacao) * 100 if valor_operacao > 0 else 0
             cor, classe_linha = ("green", "linha-verde") if lucro_liquido >= 0 else ("red", "linha-vermelha")
