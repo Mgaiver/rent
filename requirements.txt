@@ -4,3 +4,4 @@ pandas
 xlsxwriter
 datetime
 BytesIO
+streamlit-autorefresh

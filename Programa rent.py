@@ -3,16 +3,14 @@ import yfinance as yf
 import pandas as pd
 from io import BytesIO
 from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
 st.title("🔁 Analisador de Long & Short")
 st.caption("Compare preços de entrada e mercado para avaliar operações individuais e o consolidado.")
-st.experimental_set_query_params(refresh=str(datetime.now()))  # Força atualização a cada load
 
-# Atualização automática a cada 30s
-st_autorefresh = st.experimental_rerun if "last_refresh" in st.session_state and \
-    (datetime.now() - st.session_state.last_refresh).seconds >= 30 else None
-st.session_state.last_refresh = datetime.now()
+# Atualização automática a cada 8 segundos
+st_autorefresh(interval=8000, key="refresh")
 
 # Função para buscar preço atual + nome da empresa
 def preco_atual(ticker):
@@ -68,51 +66,52 @@ if st.button("🧹 Resetar todas as operações"):
     st.experimental_rerun()
 
 # Exibir operações com botão de excluir
-st.subheader("📋 Operações adicionadas")
 dados_resultado = []
 lucro_total = 0
 valor_total = 0
 
-for i, op in enumerate(st.session_state.operacoes):
-    col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns([1.2, 1.2, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
-    preco, nome_empresa = preco_atual(op["ativo"])
-    if preco is None:
-        continue
+if st.session_state.operacoes:
+    st.subheader("📋 Operações adicionadas")
+    for i, op in enumerate(st.session_state.operacoes):
+        col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns([1.2, 1.2, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
+        preco, nome_empresa = preco_atual(op["ativo"])
+        if preco is None:
+            continue
 
-    qtd = op["quantidade"]
-    preco_exec = op["preco_exec"]
-    tipo = op["tipo"]
-    valor_operacao = qtd * preco_exec
-    if tipo == 'c':
-        lucro = (preco - preco_exec) * qtd
-    else:
-        lucro = (preco_exec - preco) * qtd
-    perc = (lucro / valor_operacao) * 100 if valor_operacao > 0 else 0
-    cor = "green" if lucro > 0 else "red"
+        qtd = op["quantidade"]
+        preco_exec = op["preco_exec"]
+        tipo = op["tipo"]
+        valor_operacao = qtd * preco_exec
+        if tipo == 'c':
+            lucro = (preco - preco_exec) * qtd
+        else:
+            lucro = (preco_exec - preco) * qtd
+        perc = (lucro / valor_operacao) * 100 if valor_operacao > 0 else 0
+        cor = "green" if lucro > 0 else "red"
 
-    col1.markdown(f"<span title='{nome_empresa}'>{op['ativo']}</span>", unsafe_allow_html=True)
-    col2.write("Compra" if tipo == "c" else "Venda")
-    col3.write(qtd)
-    col4.write(f"R$ {preco_exec:.2f}")
-    col5.write(f"R$ {preco:.2f}")
-    col6.markdown(f"<span style='color:{cor}'>R$ {lucro:.2f}</span>", unsafe_allow_html=True)
-    col7.markdown(f"<span style='color:{cor}'>{perc:.2f}%</span>", unsafe_allow_html=True)
-    col8.write(op["data"])
+        col1.markdown(f"<span title='{nome_empresa}'>{op['ativo']}</span>", unsafe_allow_html=True)
+        col2.write("Compra" if tipo == "c" else "Venda")
+        col3.write(qtd)
+        col4.write(f"R$ {preco_exec:.2f}")
+        col5.write(f"R$ {preco:.2f}")
+        col6.markdown(f"<div style='background-color: #fff3cd; padding: 4px; border-radius: 5px;'><span style='color:{cor};'>R$ {lucro:.2f}</span></div>", unsafe_allow_html=True)
+        col7.markdown(f"<div style='background-color: #fff3cd; padding: 4px; border-radius: 5px;'><span style='color:{cor};'>{perc:.2f}%</span></div>", unsafe_allow_html=True)
+        col8.write(op["data"])
 
-    if col9.button("🗑️", key=f"del_{i}"):
-        st.session_state.operacoes.pop(i)
-        st.experimental_rerun()
+        if col9.button("🗑️", key=f"del_{i}"):
+            st.session_state.operacoes.pop(i)
+            st.experimental_rerun()
 
-    dados_resultado.append({
-        "Ativo": op["ativo"],
-        "Tipo": "Compra" if tipo == "c" else "Venda",
-        "Data": op["data"],
-        "Qtd": qtd,
-        "Preço Exec.": round(preco_exec, 2),
-        "Preço Atual": round(preco, 2),
-        "Lucro/Prejuízo (R$)": round(lucro, 2),
-        "Variação (%)": round(perc, 2)
-    })
+        dados_resultado.append({
+            "Ativo": op["ativo"],
+            "Tipo": "Compra" if tipo == "c" else "Venda",
+            "Data": op["data"],
+            "Qtd": qtd,
+            "Preço Exec.": round(preco_exec, 2),
+            "Preço Atual": round(preco, 2),
+            "Lucro/Prejuízo (R$)": round(lucro, 2),
+            "Variação (%)": round(perc, 2)
+        })
 
 # Exibir resultado consolidado
 if dados_resultado:
