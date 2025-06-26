@@ -87,11 +87,10 @@ with st.form("form_operacao"):
             help="Digite o valor por ação, e não o valor total da ordem."
         )
     
-    # O date_input fica fora das colunas para ocupar a largura total
     data_operacao = st.date_input(
         "Data da Operação",
         datetime.now(),
-        format="DD/MM/YYYY"  # CORREÇÃO: Usar o formato esperado pelo Streamlit
+        format="DD/MM/YYYY"
     )
 
     submitted = st.form_submit_button("➕ Adicionar Operação", use_container_width=True)
@@ -105,21 +104,19 @@ if submitted and ativo and preco_exec > 0 and tipo_operacao:
         "preco_exec": preco_exec,
         "data": data_operacao.strftime("%d/%m/%Y")
     })
-    st.rerun() # Recarrega a página para atualizar a lista
+    st.rerun()
 
 # --- Exibição das Operações ---
 if st.session_state.operacoes:
     st.subheader("📋 Operações Adicionadas")
     
-    # Header da tabela de operações
-    cols_header = st.columns([1.5, 1, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
-    headers = ["Ativo", "Tipo", "Qtd.", "Preço Exec.", "Preço Atual", "Lucro/Prej.", "%", "Data", ""]
+    cols_header = st.columns([1.5, 1, 1, 1.3, 1.3, 1.2, 1.5, 1.2, 1.2, 0.5])
+    headers = ["Ativo", "Tipo", "Qtd.", "Preço Exec.", "Preço Atual", "Custo (R$)", "Lucro Líq.", "% Líq.", "Data", ""]
     for col, header in zip(cols_header, headers):
         col.markdown(f"**{header}**")
     
     dados_para_df = []
     
-    # Itera sobre uma cópia da lista para permitir a exclusão segura
     for i, op in enumerate(st.session_state.operacoes[:]):
         preco_atual, nome_empresa = get_stock_data(op["ativo"])
         
@@ -130,38 +127,43 @@ if st.session_state.operacoes:
         qtd = op["quantidade"]
         preco_exec = op["preco_exec"]
         tipo = op["tipo"]
+        
+        # --- CÁLCULOS COM CUSTO ---
         valor_operacao = qtd * preco_exec
-        lucro = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
-        perc = (lucro / valor_operacao) * 100 if valor_operacao > 0 else 0
-        cor = "green" if lucro >= 0 else "red"
-        classe_linha = "linha-verde" if lucro >= 0 else "linha-vermelha"
+        custo = valor_operacao * 0.005  # Custo de 0.5%
+        lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
+        lucro_liquido = lucro_bruto - custo
+        perc_liquido = (lucro_liquido / valor_operacao) * 100 if valor_operacao > 0 else 0
+        
+        cor = "green" if lucro_liquido >= 0 else "red"
+        classe_linha = "linha-verde" if lucro_liquido >= 0 else "linha-vermelha"
 
-        # Container para cada linha de operação
         with st.container():
             st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
-            cols_data = st.columns([1.5, 1, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
+            cols_data = st.columns([1.5, 1, 1, 1.3, 1.3, 1.2, 1.5, 1.2, 1.2, 0.5])
             
             cols_data[0].markdown(f"<span title='{nome_empresa}'>{op['ativo']}</span>", unsafe_allow_html=True)
             cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
             cols_data[2].write(qtd)
             cols_data[3].write(f"R$ {preco_exec:.2f}")
             cols_data[4].write(f"R$ {preco_atual:.2f}")
-            cols_data[5].markdown(f"<b style='color:{cor};'>R$ {lucro:,.2f}</b>", unsafe_allow_html=True)
-            cols_data[6].markdown(f"<b style='color:{cor};'>{perc:.2f}%</b>", unsafe_allow_html=True)
-            cols_data[7].write(op["data"])
+            cols_data[5].write(f"R$ {custo:.2f}")
+            cols_data[6].markdown(f"<b style='color:{cor};'>R$ {lucro_liquido:,.2f}</b>", unsafe_allow_html=True)
+            cols_data[7].markdown(f"<b style='color:{cor};'>{perc_liquido:.2f}%</b>", unsafe_allow_html=True)
+            cols_data[8].write(op["data"])
 
-            # Botão de exclusão
-            if cols_data[8].button("🗑️", key=f"del_{i}", help="Excluir operação"):
+            if cols_data[9].button("🗑️", key=f"del_{i}", help="Excluir operação"):
                 st.session_state.operacoes.pop(i)
-                st.rerun() # CORREÇÃO: Substitui st.experimental_rerun()
+                st.rerun()
 
             st.markdown("</div>", unsafe_allow_html=True)
         
-        # Adiciona dados para o DataFrame consolidado
         dados_para_df.append({
             "Ativo": op["ativo"], "Tipo": "Compra" if tipo == "c" else "Venda", "Data": op["data"],
             "Qtd": qtd, "Preço Exec.": preco_exec, "Preço Atual": preco_atual,
-            "Lucro/Prejuízo (R$)": lucro, "Variação (%)": perc
+            "Custo (R$)": custo,
+            "Lucro Líquido (R$)": lucro_liquido, 
+            "Variação Líquida (%)": perc_liquido
         })
 
     # --- Resultado Consolidado e Exportação ---
@@ -171,30 +173,33 @@ if st.session_state.operacoes:
         
         df_resultado = pd.DataFrame(dados_para_df)
         
-        # Calcula totais
-        lucro_total = df_resultado["Lucro/Prejuízo (R$)"].sum()
+        lucro_total_liquido = df_resultado["Lucro Líquido (R$)"] .sum()
+        custo_total = df_resultado["Custo (R$)"].sum()
         valor_total_investido = (df_resultado["Qtd"] * df_resultado["Preço Exec."]).sum()
-        rentabilidade_total = (lucro_total / valor_total_investido) * 100 if valor_total_investido > 0 else 0
+        rentabilidade_total = (lucro_total_liquido / valor_total_investido) * 100 if valor_total_investido > 0 else 0
         
-        # Exibe o DataFrame
         st.dataframe(df_resultado.style.applymap(
-            lambda v: f"color: {'green' if v >= 0 else 'red'}", subset=["Lucro/Prejuízo (R$)", "Variação (%)"]
+            lambda v: f"color: {'green' if v >= 0 else 'red'}", subset=["Lucro Líquido (R$)", "Variação Líquida (%)"]
         ).format({
             "Preço Exec.": "R$ {:,.2f}", "Preço Atual": "R$ {:,.2f}", 
-            "Lucro/Prejuízo (R$)": "R$ {:,.2f}", "Variação (%)": "{:,.2f}%"
+            "Custo (R$)": "R$ {:,.2f}",
+            "Lucro Líquido (R$)": "R$ {:,.2f}", 
+            "Variação Líquida (%)": "{:,.2f}%"
         }), use_container_width=True)
         
-        # Exibe métricas de resumo
         cols_metricas = st.columns(2)
-        cor_lucro = "green" if lucro_total >= 0 else "red"
+        cor_lucro = "green" if lucro_total_liquido >= 0 else "red"
         cols_metricas[0].metric(
-            label="Lucro/Prejuízo Total",
-            value=f"R$ {lucro_total:,.2f}",
+            label="Lucro/Prejuízo Total Líquido",
+            value=f"R$ {lucro_total_liquido:,.2f}",
             delta=f"{rentabilidade_total:,.2f}% sobre o total investido",
             delta_color="normal" if cor_lucro == "green" else "inverse"
         )
+        cols_metricas[1].metric(
+            label="Custo Total das Operações",
+            value=f"R$ {custo_total:,.2f}"
+        )
         
-        # Exportar para Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_resultado.to_excel(writer, index=False, sheet_name="Operacoes")
@@ -207,7 +212,6 @@ if st.session_state.operacoes:
             use_container_width=True
         )
 
-    # Botão para resetar todas as operações
     if st.button("🧹 Limpar Todas as Operações", use_container_width=True):
         st.session_state.operacoes.clear()
         st.rerun()
