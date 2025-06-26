@@ -7,7 +7,6 @@ from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
 st.title("🔁 Analisador de Long & Short")
-st.caption("Compare preços de entrada e mercado para avaliar operações individuais e o consolidado.")
 
 # Atualização automática a cada 8 segundos
 st_autorefresh(interval=8000, key="refresh")
@@ -26,12 +25,25 @@ def preco_atual(ticker):
     except Exception as e:
         return None, ""
 
+# Inicializa sessão
+if "operacoes" not in st.session_state:
+    st.session_state.operacoes = []
+if "tipo_operacao" not in st.session_state:
+    st.session_state.tipo_operacao = None
+
 # Entrada de dados
 with st.form("form_operacao"):
     col1, col2, col3 = st.columns(3)
     with col1:
         ativo = st.text_input("Ativo (ex: PETR4)", "").strip().upper()
-        tipo = st.selectbox("Tipo de operação", ["Compra", "Venda"])
+        col1a, col1b = st.columns(2)
+        with col1a:
+            if st.form_submit_button("🟢 Compra"):
+                st.session_state.tipo_operacao = "Compra"
+        with col1b:
+            if st.form_submit_button("🔴 Venda"):
+                st.session_state.tipo_operacao = "Venda"
+
     with col2:
         quantidade = st.number_input("Quantidade executada", step=100, min_value=1)
         preco_exec = st.number_input(
@@ -43,22 +55,20 @@ with st.form("form_operacao"):
             help="Digite o valor por ação, e não o valor total da ordem."
         )
     with col3:
-        data_operacao = st.date_input("Data da operação", datetime.now().date())
+        data_operacao = st.date_input("Data da operação", datetime.now().date(), format="%d/%m/%Y")
+
     submit = st.form_submit_button("Adicionar operação")
 
-# Inicializa sessão
-if "operacoes" not in st.session_state:
-    st.session_state.operacoes = []
-
 # Adiciona operação
-if submit and ativo and preco_exec > 0:
+if submit and ativo and preco_exec > 0 and st.session_state.tipo_operacao:
     st.session_state.operacoes.append({
         "ativo": ativo,
-        "tipo": "c" if tipo == "Compra" else "v",
+        "tipo": "c" if st.session_state.tipo_operacao == "Compra" else "v",
         "quantidade": quantidade,
         "preco_exec": preco_exec,
-        "data": str(data_operacao)
+        "data": data_operacao.strftime("%d/%m/%Y")
     })
+    st.session_state.tipo_operacao = None
 
 # Botão para resetar todas as operações
 if st.button("🧹 Resetar todas as operações"):
