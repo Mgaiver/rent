@@ -2,25 +2,31 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from io import BytesIO
+from datetime import datetime
 
 st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
-
 st.title("🔁 Analisador de Long & Short")
 st.caption("Compare preços de entrada e mercado para avaliar operações individuais e o consolidado.")
+st.experimental_set_query_params(refresh=str(datetime.now()))  # Força atualização a cada load
 
-# Função para buscar preço atual
+# Atualização automática a cada 30s
+st_autorefresh = st.experimental_rerun if "last_refresh" in st.session_state and \
+    (datetime.now() - st.session_state.last_refresh).seconds >= 30 else None
+st.session_state.last_refresh = datetime.now()
+
+# Função para buscar preço atual + nome da empresa
 def preco_atual(ticker):
     try:
         if not ticker.endswith(".SA"):
             ticker += ".SA"
         dados = yf.Ticker(ticker)
         historico = dados.history(period="1d")
+        nome_empresa = dados.info.get("longName", "")
         if historico.empty:
-            return None
-        return historico["Close"].iloc[-1]
+            return None, nome_empresa
+        return historico["Close"].iloc[-1], nome_empresa
     except Exception as e:
-        st.warning(f"Erro ao buscar {ticker}: {e}")
-        return None
+        return None, ""
 
 # Entrada de dados
 with st.form("form_operacao"):
@@ -38,6 +44,8 @@ with st.form("form_operacao"):
             max_value=1000.0,
             help="Digite o valor por ação, e não o valor total da ordem."
         )
+    with col3:
+        data_operacao = st.date_input("Data da operação", datetime.now().date())
     submit = st.form_submit_button("Adicionar operação")
 
 # Inicializa sessão
@@ -50,8 +58,14 @@ if submit and ativo and preco_exec > 0:
         "ativo": ativo,
         "tipo": "c" if tipo == "Compra" else "v",
         "quantidade": quantidade,
-        "preco_exec": preco_exec
+        "preco_exec": preco_exec,
+        "data": str(data_operacao)
     })
+
+# Botão para resetar todas as operações
+if st.button("🧹 Resetar todas as operações"):
+    st.session_state.operacoes.clear()
+    st.experimental_rerun()
 
 # Exibir operações com botão de excluir
 st.subheader("📋 Operações adicionadas")
@@ -60,8 +74,8 @@ lucro_total = 0
 valor_total = 0
 
 for i, op in enumerate(st.session_state.operacoes):
-    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([1.2, 1.2, 1, 1.5, 1.5, 1.5, 1.5, 0.5])
-    preco = preco_atual(op["ativo"])
+    col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns([1.2, 1.2, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
+    preco, nome_empresa = preco_atual(op["ativo"])
     if preco is None:
         continue
 
@@ -74,22 +88,25 @@ for i, op in enumerate(st.session_state.operacoes):
     else:
         lucro = (preco_exec - preco) * qtd
     perc = (lucro / valor_operacao) * 100 if valor_operacao > 0 else 0
+    cor = "green" if lucro > 0 else "red"
 
-    col1.write(op["ativo"])
+    col1.markdown(f"<span title='{nome_empresa}'>{op['ativo']}</span>", unsafe_allow_html=True)
     col2.write("Compra" if tipo == "c" else "Venda")
     col3.write(qtd)
     col4.write(f"R$ {preco_exec:.2f}")
     col5.write(f"R$ {preco:.2f}")
-    col6.write(f"R$ {lucro:.2f}")
-    col7.write(f"{perc:.2f}%")
+    col6.markdown(f"<span style='color:{cor}'>R$ {lucro:.2f}</span>", unsafe_allow_html=True)
+    col7.markdown(f"<span style='color:{cor}'>{perc:.2f}%</span>", unsafe_allow_html=True)
+    col8.write(op["data"])
 
-    if col8.button("🗑️", key=f"del_{i}"):
+    if col9.button("🗑️", key=f"del_{i}"):
         st.session_state.operacoes.pop(i)
         st.experimental_rerun()
 
     dados_resultado.append({
         "Ativo": op["ativo"],
         "Tipo": "Compra" if tipo == "c" else "Venda",
+        "Data": op["data"],
         "Qtd": qtd,
         "Preço Exec.": round(preco_exec, 2),
         "Preço Atual": round(preco, 2),
@@ -111,7 +128,7 @@ if dados_resultado:
     st.success(f"**Lucro/Prejuízo total:** R$ {lucro_total:.2f}")
     st.success(f"**Rentabilidade total:** {rentabilidade_total:.2f}%")
 
-    # Exportar para Excel (corrigido)
+    # Exportar para Excel
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_resultado.to_excel(writer, index=False, sheet_name="Operações")
