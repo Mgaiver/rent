@@ -55,7 +55,7 @@ with st.form("form_operacao"):
             help="Digite o valor por ação, e não o valor total da ordem."
         )
     with col3:
-        data_operacao = st.date_input("Data da operação", datetime.now().date(), format="%d/%m/%Y")
+        data_operacao = st.date_input("Data da operação", datetime.now().date())
 
     submit = st.form_submit_button("Adicionar operação")
 
