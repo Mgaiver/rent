@@ -92,7 +92,6 @@ st.markdown("""
     <style>
     .linha-verde { background-color: rgba(40, 167, 69, 0.15); border-left: 5px solid #28a745; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
     .linha-vermelha { background-color: rgba(220, 53, 69, 0.1); border-left: 5px solid #dc3545; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
-    /* NOVAS CORES PARA OS ALVOS */
     .linha-gain { background-color: rgba(0, 123, 255, 0.15); border-left: 5px solid #007bff; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
     .linha-loss { background-color: rgba(111, 66, 193, 0.15); border-left: 5px solid #6f42c1; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
     </style>
@@ -197,36 +196,45 @@ else:
                     st.error(f"Ativo {op['ativo']}: {nome_empresa_ou_erro}")
                     continue
                 
-                # LÓGICA DE ALERTA DE STOP CORRIGIDA
-                gain_atingido, loss_atingido = False, False
-                sg, sl = op.get('stop_gain', 0), op.get('stop_loss', 0)
-                if op['tipo'] == 'c': # Lógica para COMPRA
-                    if sg > 0 and preco_atual >= sg: gain_atingido = True
-                    if sl > 0 and preco_atual <= sl: loss_atingido = True
-                else: # Lógica para VENDA (inversa)
-                    if sg > 0 and preco_atual <= sg: gain_atingido = True
-                    if sl > 0 and preco_atual >= sl: loss_atingido = True
-
                 qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
                 valor_operacao, custo = qtd * preco_exec, (qtd * preco_exec) * 0.01
                 lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
                 lucro_liquido = lucro_bruto - custo
                 perc_liquido = (lucro_liquido / valor_operacao) * 100 if valor_operacao > 0 else 0
                 
-                if gain_atingido:
-                    classe_linha = "linha-gain"
-                elif loss_atingido:
-                    classe_linha = "linha-loss"
-                else:
-                    classe_linha = "linha-verde" if lucro_liquido >= 0 else "linha-vermelha"
+                # --- LÓGICA DE ALERTA VISUAL REESTRUTURADA ---
+                classe_linha = "linha-verde" if lucro_liquido >= 0 else "linha-vermelha"
+                alvo_atingido = False
+                mensagem_alvo = ""
+                tipo_alvo = ""
+
+                sg, sl = op.get('stop_gain', 0), op.get('stop_loss', 0)
+                
+                # Verifica se o preço cruzou algum alvo
+                target_price_hit = False
+                if tipo == 'c': # Compra
+                    if sg > 0 and preco_atual >= sg: target_price_hit = True; mensagem_alvo = f"Alvo de Gain (R$ {sg:,.2f}) alcançado!"
+                    elif sl > 0 and preco_atual <= sl: target_price_hit = True; mensagem_alvo = f"Alvo de Loss (R$ {sl:,.2f}) alcançado!"
+                else: # Venda
+                    if sg > 0 and preco_atual <= sg: target_price_hit = True; mensagem_alvo = f"Alvo de Gain (R$ {sg:,.2f}) alcançado!"
+                    elif sl > 0 and preco_atual >= sl: target_price_hit = True; mensagem_alvo = f"Alvo de Loss (R$ {sl:,.2f}) alcançado!"
+                
+                # Aplica o alerta visual APENAS se o resultado financeiro for consistente
+                if target_price_hit:
+                    if lucro_liquido > 0:
+                        classe_linha = "linha-gain"
+                        tipo_alvo = "gain"
+                    elif lucro_liquido < 0:
+                        classe_linha = "linha-loss"
+                        tipo_alvo = "loss"
 
                 with st.container():
                     st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
                     
-                    if gain_atingido:
-                        st.success(f"🎯 GAIN ATINGIDO: Alvo de R$ {sg:,.2f} alcançado!")
-                    if loss_atingido:
-                        st.error(f"🛑 LOSS ATINGIDO: Alvo de R$ {sl:,.2f} alcançado!")
+                    if tipo_alvo == "gain":
+                        st.success(f"🎯 GAIN ATINGIDO: {mensagem_alvo}")
+                    elif tipo_alvo == "loss":
+                        st.error(f"🛑 LOSS ATINGIDO: {mensagem_alvo}")
                         
                     cols_data = st.columns([1.5, 1, 1, 1.3, 1.3, 1.2, 1.5, 1.2, 1.2, 1])
                     
@@ -250,7 +258,10 @@ else:
                         st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
                 
-                status_alvo = "Gain" if gain_atingido else ("Loss" if loss_atingido else "Não")
+                status_alvo = "N/A"
+                if tipo_alvo == "gain": status_alvo = "Gain Atingido"
+                elif tipo_alvo == "loss": status_alvo = "Loss Atingido"
+                
                 dados_para_df.append({
                     "Ativo": op["ativo"], "Tipo": "Compra" if tipo == "c" else "Venda", "Data": op["data"], "Qtd": qtd,
                     "Preço Exec.": preco_exec, "Preço Atual": preco_atual, "Custo (R$)": custo,
