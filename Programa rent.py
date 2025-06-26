@@ -7,12 +7,14 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- Configurações da Página ---
 st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
-st.title("🔁 Analisador de Long & Short (Multi-Cliente)")
+# Título revertido conforme solicitado
+st.title("🔁 Analisador de Long & Short")
 
 # --- Atualização Automática ---
 st_autorefresh(interval=8000, key="datarefresh")
 
 # --- Funções ---
+@st.cache_data
 def get_stock_data(ticker):
     """
     Busca o preço de fechamento mais recente e o nome da empresa para um determinado ticker.
@@ -64,7 +66,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Inicialização do Estado da Sessão ---
-# Agora usamos um dicionário para armazenar clientes e suas operações
+# Usamos um dicionário para armazenar clientes e suas operações
 if "clientes" not in st.session_state:
     st.session_state.clientes = {}
 
