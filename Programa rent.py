@@ -25,6 +25,30 @@ def preco_atual(ticker):
     except Exception as e:
         return None, ""
 
+# CSS customizado para destacar botão selecionado e colorir linhas
+st.markdown("""
+    <style>
+    .selected-compra button {
+        background-color: #28a745 !important;
+        color: white !important;
+    }
+    .selected-venda button {
+        background-color: #dc3545 !important;
+        color: white !important;
+    }
+    .linha-verde {
+        background-color: #e6f4ea;
+        border-radius: 6px;
+        padding: 5px;
+    }
+    .linha-vermelha {
+        background-color: #fdecea;
+        border-radius: 6px;
+        padding: 5px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # Inicializa sessão
 if "operacoes" not in st.session_state:
     st.session_state.operacoes = []
@@ -37,12 +61,21 @@ with st.form("form_operacao"):
     with col1:
         ativo = st.text_input("Ativo (ex: PETR4)", "").strip().upper()
         col1a, col1b = st.columns(2)
+
+        compra_btn_class = "selected-compra" if st.session_state.tipo_operacao == "Compra" else ""
+        venda_btn_class = "selected-venda" if st.session_state.tipo_operacao == "Venda" else ""
+
         with col1a:
-            if st.form_submit_button("🟢 Compra"):
+            if st.form_submit_button("🟢 Compra", type="secondary"):
                 st.session_state.tipo_operacao = "Compra"
         with col1b:
-            if st.form_submit_button("🔴 Venda"):
+            if st.form_submit_button("🔴 Venda", type="secondary"):
                 st.session_state.tipo_operacao = "Venda"
+
+        st.markdown(f"""
+            <div class="{compra_btn_class}"></div>
+            <div class="{venda_btn_class}"></div>
+        """, unsafe_allow_html=True)
 
     with col2:
         quantidade = st.number_input("Quantidade executada", step=100, min_value=1)
@@ -55,7 +88,7 @@ with st.form("form_operacao"):
             help="Digite o valor por ação, e não o valor total da ordem."
         )
     with col3:
-        data_operacao = st.date_input("Data da operação", datetime.now().date())
+        data_operacao = st.date_input("Data da operação", datetime.now().date(), format="%d/%m/%Y")
 
     submit = st.form_submit_button("Adicionar operação")
 
@@ -83,7 +116,6 @@ valor_total = 0
 if st.session_state.operacoes:
     st.subheader("📋 Operações adicionadas")
     for i, op in enumerate(st.session_state.operacoes):
-        col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns([1.2, 1.2, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
         preco, nome_empresa = preco_atual(op["ativo"])
         if preco is None:
             continue
@@ -92,25 +124,29 @@ if st.session_state.operacoes:
         preco_exec = op["preco_exec"]
         tipo = op["tipo"]
         valor_operacao = qtd * preco_exec
-        if tipo == 'c':
-            lucro = (preco - preco_exec) * qtd
-        else:
-            lucro = (preco_exec - preco) * qtd
+        lucro = (preco - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco) * qtd
         perc = (lucro / valor_operacao) * 100 if valor_operacao > 0 else 0
         cor = "green" if lucro > 0 else "red"
+        classe_linha = "linha-verde" if lucro > 0 else "linha-vermelha"
 
-        col1.markdown(f"<span title='{nome_empresa}'>{op['ativo']}</span>", unsafe_allow_html=True)
-        col2.write("Compra" if tipo == "c" else "Venda")
-        col3.write(qtd)
-        col4.write(f"R$ {preco_exec:.2f}")
-        col5.write(f"R$ {preco:.2f}")
-        col6.markdown(f"<div style='background-color: #fff3cd; padding: 4px; border-radius: 5px;'><span style='color:{cor};'>R$ {lucro:.2f}</span></div>", unsafe_allow_html=True)
-        col7.markdown(f"<div style='background-color: #fff3cd; padding: 4px; border-radius: 5px;'><span style='color:{cor};'>{perc:.2f}%</span></div>", unsafe_allow_html=True)
-        col8.write(op["data"])
+        with st.container():
+            st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
+            col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns([1.2, 1.2, 1, 1.5, 1.5, 1.5, 1.5, 1.2, 0.5])
 
-        if col9.button("🗑️", key=f"del_{i}"):
-            st.session_state.operacoes.pop(i)
-            st.experimental_rerun()
+            col1.markdown(f"<span title='{nome_empresa}'>{op['ativo']}</span>", unsafe_allow_html=True)
+            col2.write("Compra" if tipo == "c" else "Venda")
+            col3.write(qtd)
+            col4.write(f"R$ {preco_exec:.2f}")
+            col5.write(f"R$ {preco:.2f}")
+            col6.markdown(f"<span style='color:{cor};'>R$ {lucro:.2f}</span>", unsafe_allow_html=True)
+            col7.markdown(f"<span style='color:{cor};'>{perc:.2f}%</span>", unsafe_allow_html=True)
+            col8.write(op["data"])
+
+            if col9.button("🗑️", key=f"del_{i}"):
+                st.session_state.operacoes.pop(i)
+                st.experimental_rerun()
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
         dados_resultado.append({
             "Ativo": op["ativo"],
