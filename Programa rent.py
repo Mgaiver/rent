@@ -210,3 +210,5 @@ else:
     if st.button("🧹 Limpar TUDO (Todos os clientes e operações)", use_container_width=True):
         st.session_state.clientes.clear()
         st.rerun()
+
+        # teste
