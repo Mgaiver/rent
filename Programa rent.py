@@ -216,9 +216,9 @@ else:
                 assessor_total_vendido += sum(op['quantidade'] * op['preco_exec'] for op in operacoes_cliente if op['tipo'] == 'v')
 
             st.markdown("#### 💰 Financeiro Total do Assessor")
-            metric_cols_assessor = st.columns(2)
-            metric_cols_assessor[0].metric("Total em Long (Compras)", f"R$ {assessor_total_comprado:,.2f}")
-            metric_cols_assessor[1].metric("Total em Short (Vendas)", f"R$ {assessor_total_vendido:,.2f}")
+            # --- ALTERAÇÃO APLICADA AQUI ---
+            total_em_operacao = assessor_total_comprado + assessor_total_vendido
+            st.metric("Total em Operação (Long + Short)", f"R$ {total_em_operacao:,.2f}")
             st.divider()
 
             for cliente, operacoes in list(clientes.items()):
