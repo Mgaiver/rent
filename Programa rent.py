@@ -27,7 +27,7 @@ st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
 st.title("🔁 Analisador de Long & Short")
 
 # --- Atualização Automática ---
-st_autorefresh(interval=8000, key="datarefresh")
+st_autorefresh(interval=10000, key="datarefresh") # Aumentado para 10s para aliviar chamadas
 
 
 # --- Configuração das APIs ---
@@ -79,41 +79,37 @@ def load_data_from_firestore():
         return {}
 
 
-# --- NOVA FUNÇÃO get_stock_data USANDO POLYGON.IO ---
+# --- FUNÇÃO OTIMIZADA get_stock_data ---
 def get_stock_data(ticker):
     """
     Busca o preço do último trade de um ativo usando a API do Polygon.io.
     """
     if polygon_client is None:
-        return None, "API do Polygon.io não configurada", None
+        return {"price": None, "name": "API Polygon não configurada", "timestamp": "N/A"}
 
-    # O Polygon.io não usa o sufixo .SA para ações brasileiras
     ticker_polygon = ticker.replace(".SA", "")
-
     try:
-        # Pega a última cotação (trade) para o ticker
         resp = polygon_client.get_last_trade(ticker_polygon)
-        
-        # Pega detalhes do ticker para obter o nome da empresa
         details = polygon_client.get_ticker_details(ticker_polygon)
-        company_name = details.name
-
-        price = resp.price
-        # Converte o timestamp de nanossegundos do Polygon para um formato legível
         last_update_time = pd.to_datetime(resp.participant_timestamp, unit='ns').tz_localize('UTC').tz_convert('America/Sao_Paulo')
         
-        return price, company_name, last_update_time.strftime("%H:%M:%S")
-
-    except Exception as e:
-        # Tenta usar o Yahoo Finance como um fallback em caso de erro
+        return {
+            "price": resp.price,
+            "name": details.name,
+            "timestamp": last_update_time.strftime("%H:%M:%S")
+        }
+    except Exception:
+        # Tenta usar o Yahoo Finance como um fallback
         try:
             stock = yf.Ticker(f"{ticker}.SA")
             info = stock.info
-            price = info.get('currentPrice')
-            company_name = info.get("longName", "N/A")
-            return price, company_name, "Yahoo Fallback"
-        except Exception as yf_e:
-            return None, f"Erro no Polygon e YFinance: {e}", None
+            return {
+                "price": info.get('currentPrice'),
+                "name": info.get("longName", "N/A"),
+                "timestamp": "Yahoo Fallback"
+            }
+        except Exception:
+            return {"price": None, "name": f"Erro em ambas as APIs para {ticker}", "timestamp": "N/A"}
 
 
 # --- FEEDBACK DE CONEXÃO COM AS APIS ---
@@ -128,7 +124,7 @@ else:
     st.warning("📉 Usando fonte de dados alternativa (Yahoo Finance). Pode haver atrasos. Verifique a chave da API do Polygon.")
 
 
-# --- CSS E LÓGICA DO APP (sem alterações a partir daqui) ---
+# --- CSS E LÓGICA DO APP ---
 st.markdown("""
     <style>
     .linha-verde { background-color: rgba(40, 167, 69, 0.15); border-left: 5px solid #28a745; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
@@ -198,6 +194,13 @@ with st.form("form_operacao"):
 if not st.session_state.clientes:
     st.info("Adicione uma operação no formulário acima para começar a análise.")
 else:
+    # --- OTIMIZAÇÃO: BUSCA DE PREÇOS ---
+    unique_tickers = set(op['ativo'] for ops in st.session_state.clientes.values() for op in ops)
+    price_data_cache = {ticker: get_stock_data(ticker) for ticker in unique_tickers}
+    
+    st.write(f"Ativos únicos na tela: {len(unique_tickers)}. Chamadas de API por ciclo: {len(unique_tickers) * 2}")
+
+
     for cliente, operacoes in list(st.session_state.clientes.items()):
         with st.expander(f"Cliente: {cliente}", expanded=True):
             st.subheader(f"Análise de {cliente}")
@@ -219,7 +222,10 @@ else:
             
             dados_para_df = []
             for i, op in enumerate(operacoes[:]):
-                preco_atual, nome_empresa_ou_erro, timestamp = get_stock_data(op["ativo"])
+                # Usa o cache de preços em vez de buscar novamente
+                data = price_data_cache.get(op["ativo"])
+                preco_atual, nome_empresa_ou_erro, timestamp = data['price'], data['name'], data['timestamp']
+
                 if preco_atual is None:
                     st.error(f"Ativo {op['ativo']}: {nome_empresa_ou_erro}")
                     continue
