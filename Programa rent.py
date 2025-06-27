@@ -6,13 +6,21 @@ from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 import json
 
-# Tente importar as bibliotecas do Google Cloud. Se não existirem, o app ainda funcionará, mas sem persistência.
+# Tenta importar as bibliotecas do Google Cloud.
 try:
     from google.cloud import firestore
     from google.oauth2 import service_account
     FIRESTORE_AVAILABLE = True
 except ImportError:
     FIRESTORE_AVAILABLE = False
+
+# --- NOVA BIBLIOTECA: Tenta importar o cliente do Polygon.io ---
+try:
+    from polygon import RESTClient
+    POLYGON_AVAILABLE = True
+except ImportError:
+    POLYGON_AVAILABLE = False
+
 
 # --- Configurações da Página ---
 st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
@@ -21,92 +29,106 @@ st.title("🔁 Analisador de Long & Short")
 # --- Atualização Automática ---
 st_autorefresh(interval=8000, key="datarefresh")
 
-# --- Configuração do Firebase/Firestore ---
+
+# --- Configuração das APIs ---
+
+# Firestore (Banco de Dados)
 @st.cache_resource
 def init_firestore():
-    """Inicializa a conexão com o Firestore usando as credenciais dos segredos do Streamlit."""
-    if not FIRESTORE_AVAILABLE:
-        return None
+    if not FIRESTORE_AVAILABLE: return None
     try:
         creds_dict = st.secrets["firebase_credentials"]
         creds = service_account.Credentials.from_service_account_info(creds_dict)
-        db = firestore.Client(credentials=creds)
-        return db
-    except (KeyError, Exception) as e:
+        return firestore.Client(credentials=creds)
+    except Exception:
         return None
 
-db = init_firestore()
+# Polygon.io (Dados de Mercado)
+@st.cache_resource
+def init_polygon_client():
+    if not POLYGON_AVAILABLE: return None
+    try:
+        api_key = st.secrets["polygon_credentials"]["api_key"]
+        return RESTClient(api_key)
+    except Exception:
+        return None
+
+db_client = init_firestore()
+polygon_client = init_polygon_client()
+
 DOC_ID = "dados_todos_clientes_v1"
 COLLECTION_NAME = "analisador_ls_data"
 
-def save_data_to_firestore(db_client, data):
-    """Salva o dicionário de clientes no Firestore."""
+def save_data_to_firestore(data):
     if db_client is None: return
     try:
         doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID)
         serializable_data = json.loads(json.dumps(data, default=str))
         doc_ref.set({"clientes": serializable_data})
     except Exception as e:
-        st.error(f"Erro ao salvar os dados no Firestore: {e}")
+        st.error(f"Erro ao salvar no Firestore: {e}")
 
-def load_data_from_firestore(db_client):
-    """Carrega o dicionário de clientes do Firestore."""
+def load_data_from_firestore():
     if db_client is None: return {}
     try:
         doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID)
         doc = doc_ref.get()
-        if doc.exists:
-            return doc.to_dict().get("clientes", {})
-        return {}
+        return doc.to_dict().get("clientes", {}) if doc.exists else {}
     except Exception as e:
-        st.error(f"Erro ao carregar os dados do Firestore: {e}")
+        st.error(f"Erro ao carregar do Firestore: {e}")
         return {}
 
-# --- Funções do App ---
+
+# --- NOVA FUNÇÃO get_stock_data USANDO POLYGON.IO ---
 def get_stock_data(ticker):
     """
-    Busca o preço mais recente e o nome da empresa, com mais robustez e retornando um timestamp.
+    Busca o preço do último trade de um ativo usando a API do Polygon.io.
     """
+    if polygon_client is None:
+        return None, "API do Polygon.io não configurada", None
+
+    # O Polygon.io não usa o sufixo .SA para ações brasileiras
+    ticker_polygon = ticker.replace(".SA", "")
+
     try:
-        if not ticker.endswith(".SA"):
-            ticker += ".SA"
-        stock = yf.Ticker(ticker)
+        # Pega a última cotação (trade) para o ticker
+        resp = polygon_client.get_last_trade(ticker_polygon)
         
-        # 1. Tenta baixar o dado do último minuto para máxima precisão
-        data = stock.history(period="2d", interval="1m", auto_adjust=True, prepost=True)
-        if not data.empty:
-            last_row = data.iloc[-1]
-            price = last_row['Close']
-            last_update_time = data.index[-1].strftime("%H:%M:%S")
-            company_name = stock.info.get("longName", "N/A")
-            return price, company_name, last_update_time
+        # Pega detalhes do ticker para obter o nome da empresa
+        details = polygon_client.get_ticker_details(ticker_polygon)
+        company_name = details.name
 
-        # 2. Fallback: Usar o 'currentPrice' do .info se o método acima falhar
-        info = stock.info
-        current_price = info.get('currentPrice')
-        company_name = info.get("longName", "N/A")
-        if current_price:
-            last_update_time = datetime.now().strftime("%H:%M:%S")
-            return current_price, company_name, last_update_time
+        price = resp.price
+        # Converte o timestamp de nanossegundos do Polygon para um formato legível
+        last_update_time = pd.to_datetime(resp.participant_timestamp, unit='ns').tz_localize('UTC').tz_convert('America/Sao_Paulo')
+        
+        return price, company_name, last_update_time.strftime("%H:%M:%S")
 
-        # 3. Fallback final: Usar o histórico diário
-        history = stock.history(period="1d")
-        if not history.empty:
-            price = history["Close"].iloc[-1]
-            last_update_time = history.index[-1].strftime("%d/%m/%Y")
-            return price, company_name, last_update_time
-
-        return None, f"Não foi possível obter preço para {ticker}", None
     except Exception as e:
-        return None, str(e), None
+        # Tenta usar o Yahoo Finance como um fallback em caso de erro
+        try:
+            stock = yf.Ticker(f"{ticker}.SA")
+            info = stock.info
+            price = info.get('currentPrice')
+            company_name = info.get("longName", "N/A")
+            return price, company_name, "Yahoo Fallback"
+        except Exception as yf_e:
+            return None, f"Erro no Polygon e YFinance: {e}", None
 
-# --- FEEDBACK DE CONEXÃO COM O BANCO DE DADOS ---
-if db:
-    st.success("💾 Conectado ao banco de dados. Os dados serão salvos automaticamente.")
+
+# --- FEEDBACK DE CONEXÃO COM AS APIS ---
+if db_client:
+    st.success("💾 Conectado ao banco de dados (Firestore).")
 else:
-    st.warning("🔌 Persistência de dados desativada. Os dados não serão salvos. Verifique as credenciais e bibliotecas.")
+    st.warning("🔌 Persistência de dados desativada. Verifique as credenciais do Firebase.")
 
-# --- CSS Customizado ---
+if polygon_client:
+    st.success("📈 Conectado à fonte de dados de mercado (Polygon.io).")
+else:
+    st.warning("📉 Usando fonte de dados alternativa (Yahoo Finance). Pode haver atrasos. Verifique a chave da API do Polygon.")
+
+
+# --- CSS E LÓGICA DO APP (sem alterações a partir daqui) ---
 st.markdown("""
     <style>
     .linha-verde { background-color: rgba(40, 167, 69, 0.15); border-left: 5px solid #28a745; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
@@ -116,17 +138,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Inicialização e Carregamento dos Dados ---
 if "clientes" not in st.session_state:
-    if db:
-        with st.spinner("Carregando dados salvos..."):
-            st.session_state.clientes = load_data_from_firestore(db)
-    else:
-        st.session_state.clientes = {}
+    with st.spinner("Carregando dados salvos..."):
+        st.session_state.clientes = load_data_from_firestore()
+
 if "editing_operation" not in st.session_state:
     st.session_state.editing_operation = None
 
-# --- Formulário de Edição (em um st.dialog) ---
 if st.session_state.editing_operation is not None:
     cliente_edit, op_index_edit = st.session_state.editing_operation
     op_data = st.session_state.clientes[cliente_edit][op_index_edit]
@@ -134,57 +152,49 @@ if st.session_state.editing_operation is not None:
     with st.dialog(f"Editando Operação: {op_data['ativo']}"):
         with st.form("edit_form"):
             st.write(f"**Ativo:** {op_data['ativo']} | **Tipo:** {'Compra' if op_data['tipo'] == 'c' else 'Venda'}")
+            new_quantidade = st.number_input("Quantidade", min_value=1, value=op_data['quantidade'])
+            new_preco_exec = st.number_input("Preço de Execução (R$)", format="%.2f", min_value=0.01, value=op_data['preco_exec'])
+            new_stop_gain = st.number_input("Stop Gain", format="%.2f", min_value=0.0, value=op_data.get('stop_gain', 0.0))
+            new_stop_loss = st.number_input("Stop Loss", format="%.2f", min_value=0.0, value=op_data.get('stop_loss', 0.0))
             
-            new_quantidade = st.number_input("Quantidade", step=100, min_value=1, value=op_data['quantidade'])
-            new_preco_exec = st.number_input("Preço de Execução (R$)", step=0.01, format="%.2f", min_value=0.01, value=op_data['preco_exec'])
-            new_stop_gain = st.number_input("Stop Gain", step=0.01, format="%.2f", min_value=0.0, value=op_data.get('stop_gain', 0.0))
-            new_stop_loss = st.number_input("Stop Loss", step=0.01, format="%.2f", min_value=0.0, value=op_data.get('stop_loss', 0.0))
-            
-            submitted_edit = st.form_submit_button("Salvar Alterações")
-            if submitted_edit:
-                st.session_state.clientes[cliente_edit][op_index_edit]['quantidade'] = new_quantidade
-                st.session_state.clientes[cliente_edit][op_index_edit]['preco_exec'] = new_preco_exec
-                st.session_state.clientes[cliente_edit][op_index_edit]['stop_gain'] = new_stop_gain
-                st.session_state.clientes[cliente_edit][op_index_edit]['stop_loss'] = new_stop_loss
-                
-                save_data_to_firestore(db, st.session_state.clientes)
+            if st.form_submit_button("Salvar Alterações"):
+                op_data.update({
+                    'quantidade': new_quantidade, 'preco_exec': new_preco_exec,
+                    'stop_gain': new_stop_gain, 'stop_loss': new_stop_loss
+                })
+                save_data_to_firestore(st.session_state.clientes)
                 st.session_state.editing_operation = None
                 st.rerun()
-
             if st.form_submit_button("Cancelar"):
                 st.session_state.editing_operation = None
                 st.rerun()
 
-# --- Formulário de Entrada de Operação ---
 with st.form("form_operacao"):
     st.subheader("Adicionar Nova Operação")
     c1, c2 = st.columns(2)
     with c1:
         cliente = st.text_input("Nome do Cliente", "").strip()
         quantidade = st.number_input("Quantidade", step=100, min_value=1)
-        stop_gain = st.number_input("Stop Gain (Opcional)", step=0.01, format="%.2f", min_value=0.0, help="Deixe 0 para não definir.")
+        stop_gain = st.number_input("Stop Gain (Opcional)", format="%.2f", min_value=0.0)
     with c2:
         ativo = st.text_input("Ativo (ex: PETR4)", "").strip().upper()
-        preco_exec = st.number_input("Preço Exec. (R$)", step=0.01, format="%.2f", min_value=0.01)
-        stop_loss = st.number_input("Stop Loss (Opcional)", step=0.01, format="%.2f", min_value=0.0, help="Deixe 0 para não definir.")
+        preco_exec = st.number_input("Preço Exec. (R$)", format="%.2f", min_value=0.01)
+        stop_loss = st.number_input("Stop Loss (Opcional)", format="%.2f", min_value=0.0)
     
     tipo_operacao = st.radio("Tipo de Operação", ["Compra", "Venda"], horizontal=True)
     data_operacao = st.date_input("Data da Operação", datetime.now(), format="DD/MM/YYYY")
-    submitted = st.form_submit_button("➕ Adicionar Operação", use_container_width=True)
+    if st.form_submit_button("➕ Adicionar Operação", use_container_width=True):
+        if cliente and ativo and preco_exec > 0:
+            if cliente not in st.session_state.clientes:
+                st.session_state.clientes[cliente] = []
+            st.session_state.clientes[cliente].append({
+                "ativo": ativo, "tipo": "c" if tipo_operacao == "Compra" else "v", "quantidade": quantidade,
+                "preco_exec": preco_exec, "data": data_operacao.strftime("%d/%m/%Y"),
+                "stop_gain": stop_gain, "stop_loss": stop_loss
+            })
+            save_data_to_firestore(st.session_state.clientes)
+            st.rerun()
 
-# --- Lógica de Adição de Operação ---
-if submitted and cliente and ativo and preco_exec > 0:
-    if cliente not in st.session_state.clientes:
-        st.session_state.clientes[cliente] = []
-    st.session_state.clientes[cliente].append({
-        "ativo": ativo, "tipo": "c" if tipo_operacao == "Compra" else "v", "quantidade": quantidade,
-        "preco_exec": preco_exec, "data": data_operacao.strftime("%d/%m/%Y"),
-        "stop_gain": stop_gain, "stop_loss": stop_loss
-    })
-    save_data_to_firestore(db, st.session_state.clientes)
-    st.rerun()
-
-# --- Exibição das Operações por Cliente ---
 if not st.session_state.clientes:
     st.info("Adicione uma operação no formulário acima para começar a análise.")
 else:
@@ -205,8 +215,7 @@ else:
             st.markdown("##### Detalhes das Operações")
             headers = ["Ativo", "Tipo", "Qtd.", "Preço Exec.", "Preço Atual", "Custo (R$)", "Lucro Líq.", "% Líq.", "Data", "Ações"]
             cols_header = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1])
-            for col, header in zip(cols_header, headers):
-                col.markdown(f"**{header}**")
+            for col, header in zip(cols_header, headers): col.markdown(f"**{header}**")
             
             dados_para_df = []
             for i, op in enumerate(operacoes[:]):
@@ -216,48 +225,39 @@ else:
                     continue
                 
                 qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
-                
                 valor_entrada = qtd * preco_exec
                 valor_saida_atual = qtd * preco_atual
-                custo_entrada, custo_saida = valor_entrada * 0.005, valor_saida_atual * 0.005
-                custo_total = custo_entrada + custo_saida
-                
+                custo_total = (valor_entrada * 0.005) + (valor_saida_atual * 0.005)
                 lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
                 lucro_liquido = lucro_bruto - custo_total
                 perc_liquido = (lucro_liquido / valor_entrada) * 100 if valor_entrada > 0 else 0
                 
                 classe_linha = "linha-verde" if lucro_liquido >= 0 else "linha-vermelha"
                 mensagem_alvo, tipo_alvo = "", ""
-
                 sg, sl = op.get('stop_gain', 0), op.get('stop_loss', 0)
                 
                 target_price_hit = False
-                if tipo == 'c': # Compra
-                    if sg > 0 and preco_atual >= sg: target_price_hit = True; mensagem_alvo = f"Alvo de Gain (R$ {sg:,.2f}) alcançado!"
-                    elif sl > 0 and preco_atual <= sl: target_price_hit = True; mensagem_alvo = f"Alvo de Loss (R$ {sl:,.2f}) alcançado!"
-                else: # Venda
-                    if sg > 0 and preco_atual <= sg: target_price_hit = True; mensagem_alvo = f"Alvo de Gain (R$ {sg:,.2f}) alcançado!"
-                    elif sl > 0 and preco_atual >= sl: target_price_hit = True; mensagem_alvo = f"Alvo de Loss (R$ {sl:,.2f}) alcançado!"
+                if tipo == 'c':
+                    if sg > 0 and preco_atual >= sg: target_price_hit = True; mensagem_alvo = f"Gain (R$ {sg:,.2f})"
+                    elif sl > 0 and preco_atual <= sl: target_price_hit = True; mensagem_alvo = f"Loss (R$ {sl:,.2f})"
+                else:
+                    if sg > 0 and preco_atual <= sg: target_price_hit = True; mensagem_alvo = f"Gain (R$ {sg:,.2f})"
+                    elif sl > 0 and preco_atual >= sl: target_price_hit = True; mensagem_alvo = f"Loss (R$ {sl:,.2f})"
                 
                 if target_price_hit:
-                    if lucro_liquido > 0:
-                        classe_linha, tipo_alvo = "linha-gain", "gain"
-                    elif lucro_liquido < 0:
-                        classe_linha, tipo_alvo = "linha-loss", "loss"
+                    if lucro_liquido > 0: classe_linha, tipo_alvo = "linha-gain", "gain"
+                    elif lucro_liquido < 0: classe_linha, tipo_alvo = "linha-loss", "loss"
 
                 with st.container():
                     st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
-                    
-                    if tipo_alvo == "gain": st.success(f"🎯 GAIN ATINGIDO: {mensagem_alvo}")
-                    elif tipo_alvo == "loss": st.error(f"🛑 LOSS ATINGIDO: {mensagem_alvo}")
+                    if tipo_alvo == "gain": st.success(f"🎯 ALVO ATINGIDO: {mensagem_alvo}")
+                    elif tipo_alvo == "loss": st.error(f"🛑 ALVO ATINGIDO: {mensagem_alvo}")
                         
                     cols_data = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1])
-                    
                     cols_data[0].markdown(f"<span title='{nome_empresa_ou_erro}'>{op['ativo']}</span>", unsafe_allow_html=True)
                     cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
                     cols_data[2].write(f"{qtd:,}")
                     cols_data[3].write(f"R$ {preco_exec:,.2f}")
-                    # NOVO: Adiciona o timestamp ao preço atual
                     cols_data[4].markdown(f"R$ {preco_atual:,.2f}<br><small>({timestamp})</small>", unsafe_allow_html=True)
                     cols_data[5].write(f"R$ {custo_total:,.2f}")
                     cols_data[6].markdown(f"<b>R$ {lucro_liquido:,.2f}</b>", unsafe_allow_html=True)
@@ -265,21 +265,17 @@ else:
                     cols_data[8].write(op["data"])
                     
                     action_cols = cols_data[9].columns([1,1])
-                    if action_cols[0].button("✏️", key=f"edit_op_{cliente}_{i}", help="Editar operação"):
+                    if action_cols[0].button("✏️", key=f"edit_op_{cliente}_{i}", help="Editar"):
                         st.session_state.editing_operation = (cliente, i); st.rerun()
-                    if action_cols[1].button("🗑️", key=f"del_op_{cliente}_{i}", help="Excluir operação"):
-                        st.session_state.clientes[cliente].pop(i); save_data_to_firestore(db, st.session_state.clientes); st.rerun()
+                    if action_cols[1].button("🗑️", key=f"del_op_{cliente}_{i}", help="Excluir"):
+                        st.session_state.clientes[cliente].pop(i); save_data_to_firestore(st.session_state.clientes); st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
-                
-                status_alvo = "N/A"
-                if tipo_alvo == "gain": status_alvo = "Gain Atingido"
-                elif tipo_alvo == "loss": status_alvo = "Loss Atingido"
                 
                 dados_para_df.append({
                     "Ativo": op["ativo"], "Tipo": "Compra" if tipo == "c" else "Venda", "Data": op["data"], "Qtd": qtd,
                     "Preço Exec.": preco_exec, "Preço Atual": preco_atual, "Custo (R$)": custo_total,
                     "Lucro Líquido (R$)": lucro_liquido, "Variação Líquida (%)": perc_liquido,
-                    "Stop Gain": sg, "Stop Loss": sl, "Status Alvo": status_alvo, "Últ. Atuali.": timestamp
+                    "Stop Gain": sg, "Stop Loss": sl, "Status Alvo": tipo_alvo or "N/A", "Últ. Atuali.": timestamp
                 })
 
             if dados_para_df:
@@ -303,5 +299,5 @@ else:
 
     if st.button("🧹 Limpar TUDO (Todos os clientes e operações)", use_container_width=True):
         st.session_state.clientes.clear()
-        save_data_to_firestore(db, st.session_state.clientes)
+        save_data_to_firestore(st.session_state.clientes)
         st.rerun()
