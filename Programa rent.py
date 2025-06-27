@@ -35,28 +35,56 @@ def init_firestore():
 
 db_client = init_firestore()
 
-DOC_ID = "dados_gerais_v2" # Novo ID de documento para a nova estrutura
+DOC_ID = "dados_gerais_v2" 
 COLLECTION_NAME = "analisador_ls_data"
 
 def save_data_to_firestore(data):
     if db_client is None: return
     try:
         doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID)
-        # A chave principal agora é 'assessores'
         serializable_data = json.loads(json.dumps(data, default=str))
         doc_ref.set({"assessores": serializable_data})
     except Exception as e:
         st.error(f"Erro ao salvar no Firestore: {e}")
 
+# --- FUNÇÃO DE CARREGAMENTO COM MIGRAÇÃO AUTOMÁTICA ---
 def load_data_from_firestore():
     if db_client is None: return {}
     try:
+        # Tenta carregar o documento com a nova estrutura
         doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID)
         doc = doc_ref.get()
-        # Busca pela chave 'assessores'
-        return doc.to_dict().get("assessores", {}) if doc.exists else {}
+        if doc.exists:
+            data = doc.to_dict()
+            # Se já tem a estrutura de assessores, retorna
+            if "assessores" in data:
+                return data.get("assessores", {})
+            # Se tem a estrutura antiga de clientes, migra
+            elif "clientes" in data:
+                st.info("Detectamos dados antigos. Realizando migração automática para o assessor 'Gaja'.")
+                old_clients = data.get("clientes", {})
+                migrated_data = {"Gaja": old_clients}
+                save_data_to_firestore(migrated_data) # Salva a nova estrutura
+                st.success("Migração concluída com sucesso!")
+                return migrated_data
+
+        # Fallback para o documento com ID antigo, caso exista
+        old_doc_ref = db_client.collection(COLLECTION_NAME).document("dados_todos_clientes_v1")
+        old_doc = old_doc_ref.get()
+        if old_doc.exists:
+            st.info("Detectamos dados antigos. Realizando migração automática para o assessor 'Gaja'.")
+            old_data = old_doc.to_dict()
+            old_clients = old_data.get("clientes", {})
+            migrated_data = {"Gaja": old_clients}
+            save_data_to_firestore(migrated_data)
+            st.success("Migração concluída com sucesso!")
+            # Opcional: deletar o documento antigo após migração
+            # old_doc_ref.delete()
+            return migrated_data
+            
+        return {}
     except Exception as e:
-        st.error(f"Erro ao carregar do Firestore: {e}")
+        st.error(f"Erro ao carregar ou migrar dados do Firestore: {e}")
         return {}
 
 
@@ -161,7 +189,6 @@ with st.form("form_operacao"):
     data_operacao = st.date_input("Data da Operação", datetime.now(), format="DD/MM/YYYY")
     if st.form_submit_button("➕ Adicionar Operação", use_container_width=True):
         if cliente and ativo and preco_exec > 0:
-            # Lógica para adicionar na nova estrutura
             if assessor not in st.session_state.assessores:
                 st.session_state.assessores[assessor] = {}
             if cliente not in st.session_state.assessores[assessor]:
@@ -178,12 +205,10 @@ with st.form("form_operacao"):
 if not st.session_state.assessores:
     st.info("Adicione uma operação no formulário acima para começar a análise.")
 else:
-    # --- LOOP PRINCIPAL AGORA POR ASSESSOR ---
     for assessor, clientes in list(st.session_state.assessores.items()):
         with st.container(border=True):
             st.title(f"Assessor: {assessor}")
 
-            # --- CÁLCULO E EXIBIÇÃO DO TOTAL POR ASSESSOR ---
             assessor_total_comprado = 0
             assessor_total_vendido = 0
             for operacoes_cliente in clientes.values():
@@ -196,7 +221,6 @@ else:
             metric_cols_assessor[1].metric("Total em Short (Vendas)", f"R$ {assessor_total_vendido:,.2f}")
             st.divider()
 
-            # --- LOOP SECUNDÁRIO POR CLIENTE ---
             for cliente, operacoes in list(clientes.items()):
                 with st.expander(f"Cliente: {cliente}", expanded=True):
                     
