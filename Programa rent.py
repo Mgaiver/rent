@@ -64,22 +64,41 @@ def load_data_from_firestore(db_client):
 
 # --- Funções do App ---
 def get_stock_data(ticker):
-    """Busca o preço de fechamento mais recente e o nome da empresa."""
+    """
+    Busca o preço mais recente e o nome da empresa, com mais robustez e retornando um timestamp.
+    """
     try:
         if not ticker.endswith(".SA"):
             ticker += ".SA"
         stock = yf.Ticker(ticker)
+        
+        # 1. Tenta baixar o dado do último minuto para máxima precisão
+        data = stock.history(period="2d", interval="1m", auto_adjust=True, prepost=True)
+        if not data.empty:
+            last_row = data.iloc[-1]
+            price = last_row['Close']
+            last_update_time = data.index[-1].strftime("%H:%M:%S")
+            company_name = stock.info.get("longName", "N/A")
+            return price, company_name, last_update_time
+
+        # 2. Fallback: Usar o 'currentPrice' do .info se o método acima falhar
         info = stock.info
-        company_name = info.get("longName", "N/A")
         current_price = info.get('currentPrice')
+        company_name = info.get("longName", "N/A")
         if current_price:
-            return current_price, company_name
+            last_update_time = datetime.now().strftime("%H:%M:%S")
+            return current_price, company_name, last_update_time
+
+        # 3. Fallback final: Usar o histórico diário
         history = stock.history(period="1d")
         if not history.empty:
-            return history["Close"].iloc[-1], company_name
-        return None, f"Não foi possível obter preço para {ticker}"
+            price = history["Close"].iloc[-1]
+            last_update_time = history.index[-1].strftime("%d/%m/%Y")
+            return price, company_name, last_update_time
+
+        return None, f"Não foi possível obter preço para {ticker}", None
     except Exception as e:
-        return None, str(e)
+        return None, str(e), None
 
 # --- FEEDBACK DE CONEXÃO COM O BANCO DE DADOS ---
 if db:
@@ -185,35 +204,30 @@ else:
 
             st.markdown("##### Detalhes das Operações")
             headers = ["Ativo", "Tipo", "Qtd.", "Preço Exec.", "Preço Atual", "Custo (R$)", "Lucro Líq.", "% Líq.", "Data", "Ações"]
-            cols_header = st.columns([1.5, 1, 1, 1.3, 1.3, 1.2, 1.5, 1.2, 1.2, 1])
+            cols_header = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1])
             for col, header in zip(cols_header, headers):
                 col.markdown(f"**{header}**")
             
             dados_para_df = []
             for i, op in enumerate(operacoes[:]):
-                preco_atual, nome_empresa_ou_erro = get_stock_data(op["ativo"])
+                preco_atual, nome_empresa_ou_erro, timestamp = get_stock_data(op["ativo"])
                 if preco_atual is None:
                     st.error(f"Ativo {op['ativo']}: {nome_empresa_ou_erro}")
                     continue
                 
                 qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
                 
-                # --- NOVA LÓGICA DE CUSTO: 0.5% na entrada e 0.5% na saída (preço atual) ---
                 valor_entrada = qtd * preco_exec
                 valor_saida_atual = qtd * preco_atual
-                
-                custo_entrada = valor_entrada * 0.005
-                custo_saida = valor_saida_atual * 0.005
+                custo_entrada, custo_saida = valor_entrada * 0.005, valor_saida_atual * 0.005
                 custo_total = custo_entrada + custo_saida
                 
                 lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
                 lucro_liquido = lucro_bruto - custo_total
                 perc_liquido = (lucro_liquido / valor_entrada) * 100 if valor_entrada > 0 else 0
                 
-                # --- LÓGICA DE ALERTA VISUAL REESTRUTURADA ---
                 classe_linha = "linha-verde" if lucro_liquido >= 0 else "linha-vermelha"
-                mensagem_alvo = ""
-                tipo_alvo = ""
+                mensagem_alvo, tipo_alvo = "", ""
 
                 sg, sl = op.get('stop_gain', 0), op.get('stop_loss', 0)
                 
@@ -227,27 +241,24 @@ else:
                 
                 if target_price_hit:
                     if lucro_liquido > 0:
-                        classe_linha = "linha-gain"
-                        tipo_alvo = "gain"
+                        classe_linha, tipo_alvo = "linha-gain", "gain"
                     elif lucro_liquido < 0:
-                        classe_linha = "linha-loss"
-                        tipo_alvo = "loss"
+                        classe_linha, tipo_alvo = "linha-loss", "loss"
 
                 with st.container():
                     st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
                     
-                    if tipo_alvo == "gain":
-                        st.success(f"🎯 GAIN ATINGIDO: {mensagem_alvo}")
-                    elif tipo_alvo == "loss":
-                        st.error(f"🛑 LOSS ATINGIDO: {mensagem_alvo}")
+                    if tipo_alvo == "gain": st.success(f"🎯 GAIN ATINGIDO: {mensagem_alvo}")
+                    elif tipo_alvo == "loss": st.error(f"🛑 LOSS ATINGIDO: {mensagem_alvo}")
                         
-                    cols_data = st.columns([1.5, 1, 1, 1.3, 1.3, 1.2, 1.5, 1.2, 1.2, 1])
+                    cols_data = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1])
                     
                     cols_data[0].markdown(f"<span title='{nome_empresa_ou_erro}'>{op['ativo']}</span>", unsafe_allow_html=True)
                     cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
                     cols_data[2].write(f"{qtd:,}")
                     cols_data[3].write(f"R$ {preco_exec:,.2f}")
-                    cols_data[4].write(f"R$ {preco_atual:,.2f}")
+                    # NOVO: Adiciona o timestamp ao preço atual
+                    cols_data[4].markdown(f"R$ {preco_atual:,.2f}<br><small>({timestamp})</small>", unsafe_allow_html=True)
                     cols_data[5].write(f"R$ {custo_total:,.2f}")
                     cols_data[6].markdown(f"<b>R$ {lucro_liquido:,.2f}</b>", unsafe_allow_html=True)
                     cols_data[7].markdown(f"<b>{perc_liquido:.2f}%</b>", unsafe_allow_html=True)
@@ -255,12 +266,9 @@ else:
                     
                     action_cols = cols_data[9].columns([1,1])
                     if action_cols[0].button("✏️", key=f"edit_op_{cliente}_{i}", help="Editar operação"):
-                        st.session_state.editing_operation = (cliente, i)
-                        st.rerun()
+                        st.session_state.editing_operation = (cliente, i); st.rerun()
                     if action_cols[1].button("🗑️", key=f"del_op_{cliente}_{i}", help="Excluir operação"):
-                        st.session_state.clientes[cliente].pop(i)
-                        save_data_to_firestore(db, st.session_state.clientes)
-                        st.rerun()
+                        st.session_state.clientes[cliente].pop(i); save_data_to_firestore(db, st.session_state.clientes); st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
                 
                 status_alvo = "N/A"
@@ -271,14 +279,14 @@ else:
                     "Ativo": op["ativo"], "Tipo": "Compra" if tipo == "c" else "Venda", "Data": op["data"], "Qtd": qtd,
                     "Preço Exec.": preco_exec, "Preço Atual": preco_atual, "Custo (R$)": custo_total,
                     "Lucro Líquido (R$)": lucro_liquido, "Variação Líquida (%)": perc_liquido,
-                    "Stop Gain": sg, "Stop Loss": sl, "Status Alvo": status_alvo
+                    "Stop Gain": sg, "Stop Loss": sl, "Status Alvo": status_alvo, "Últ. Atuali.": timestamp
                 })
 
             if dados_para_df:
                 st.markdown("##### 📈 Resultado Consolidado do Cliente")
                 df_resultado = pd.DataFrame(dados_para_df)
                 lucro_total_liquido = df_resultado["Lucro Líquido (R$)"].sum()
-                custo_total = df_resultado["Custo (R$)"].sum()
+                custo_total_df = df_resultado["Custo (R$)"].sum()
                 valor_total_investido = (df_resultado["Qtd"] * df_resultado["Preço Exec."]).sum()
                 rentabilidade_total = (lucro_total_liquido / valor_total_investido) * 100 if valor_total_investido > 0 else 0
                 
@@ -286,7 +294,7 @@ else:
                 
                 cols_metricas = st.columns(2)
                 cols_metricas[0].metric("Lucro/Prejuízo Total Líquido", f"R$ {lucro_total_liquido:,.2f}", f"{rentabilidade_total:,.2f}% sobre o total investido", delta_color="normal")
-                cols_metricas[1].metric("Custo Total das Operações", value=f"R$ {custo_total:,.2f}")
+                cols_metricas[1].metric("Custo Total das Operações", value=f"R$ {custo_total_df:,.2f}")
                 
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
