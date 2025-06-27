@@ -14,25 +14,15 @@ try:
 except ImportError:
     FIRESTORE_AVAILABLE = False
 
-# --- NOVA BIBLIOTECA: Tenta importar o cliente do Polygon.io ---
-try:
-    from polygon import RESTClient
-    POLYGON_AVAILABLE = True
-except ImportError:
-    POLYGON_AVAILABLE = False
-
-
 # --- Configurações da Página ---
 st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
 st.title("🔁 Analisador de Long & Short")
 
 # --- Atualização Automática ---
-st_autorefresh(interval=10000, key="datarefresh") # Aumentado para 10s para aliviar chamadas
+st_autorefresh(interval=10000, key="datarefresh")
 
 
-# --- Configuração das APIs ---
-
-# Firestore (Banco de Dados)
+# --- Configuração do Firestore ---
 @st.cache_resource
 def init_firestore():
     if not FIRESTORE_AVAILABLE: return None
@@ -43,18 +33,7 @@ def init_firestore():
     except Exception:
         return None
 
-# Polygon.io (Dados de Mercado)
-@st.cache_resource
-def init_polygon_client():
-    if not POLYGON_AVAILABLE: return None
-    try:
-        api_key = st.secrets["polygon_credentials"]["api_key"]
-        return RESTClient(api_key)
-    except Exception:
-        return None
-
 db_client = init_firestore()
-polygon_client = init_polygon_client()
 
 DOC_ID = "dados_todos_clientes_v1"
 COLLECTION_NAME = "analisador_ls_data"
@@ -79,49 +58,40 @@ def load_data_from_firestore():
         return {}
 
 
-# --- FUNÇÃO OTIMIZADA get_stock_data ---
+# --- FUNÇÃO get_stock_data VOLTANDO A USAR APENAS YFINANCE ---
 def get_stock_data(ticker):
     """
-    Busca o preço do último trade de um ativo usando a API do Polygon.io.
+    Busca o preço mais recente e o nome da empresa usando yfinance.
     """
-    if polygon_client is None:
-        return {"price": None, "name": "API Polygon não configurada", "timestamp": "N/A"}
-
-    ticker_polygon = ticker.replace(".SA", "")
     try:
-        resp = polygon_client.get_last_trade(ticker_polygon)
-        details = polygon_client.get_ticker_details(ticker_polygon)
-        last_update_time = pd.to_datetime(resp.participant_timestamp, unit='ns').tz_localize('UTC').tz_convert('America/Sao_Paulo')
+        if not ticker.endswith(".SA"):
+            ticker += ".SA"
+        stock = yf.Ticker(ticker)
         
-        return {
-            "price": resp.price,
-            "name": details.name,
-            "timestamp": last_update_time.strftime("%H:%M:%S")
-        }
-    except Exception:
-        # Tenta usar o Yahoo Finance como um fallback
-        try:
-            stock = yf.Ticker(f"{ticker}.SA")
-            info = stock.info
-            return {
-                "price": info.get('currentPrice'),
-                "name": info.get("longName", "N/A"),
-                "timestamp": "Yahoo Fallback"
-            }
-        except Exception:
-            return {"price": None, "name": f"Erro em ambas as APIs para {ticker}", "timestamp": "N/A"}
+        data = stock.history(period="2d", interval="1m", auto_adjust=True, prepost=True)
+        if not data.empty:
+            last_row = data.iloc[-1]
+            price = last_row['Close']
+            last_update_time = data.index[-1].strftime("%H:%M:%S")
+            company_name = stock.info.get("longName", "N/A")
+            return price, company_name, last_update_time
+
+        info = stock.info
+        price = info.get('currentPrice')
+        company_name = info.get("longName", "N/A")
+        if price:
+            return price, company_name, datetime.now().strftime("%H:%M:%S")
+
+        return None, "Não foi possível obter preço", "N/A"
+    except Exception as e:
+        return None, str(e), "N/A"
 
 
-# --- FEEDBACK DE CONEXÃO COM AS APIS ---
+# --- FEEDBACK DE CONEXÃO ---
 if db_client:
     st.success("💾 Conectado ao banco de dados (Firestore).")
 else:
     st.warning("🔌 Persistência de dados desativada. Verifique as credenciais do Firebase.")
-
-if polygon_client:
-    st.success("📈 Conectado à fonte de dados de mercado (Polygon.io).")
-else:
-    st.warning("📉 Usando fonte de dados alternativa (Yahoo Finance). Pode haver atrasos. Verifique a chave da API do Polygon.")
 
 
 # --- CSS E LÓGICA DO APP ---
@@ -194,16 +164,18 @@ with st.form("form_operacao"):
 if not st.session_state.clientes:
     st.info("Adicione uma operação no formulário acima para começar a análise.")
 else:
-    # --- OTIMIZAÇÃO: BUSCA DE PREÇOS ---
-    unique_tickers = set(op['ativo'] for ops in st.session_state.clientes.values() for op in ops)
-    price_data_cache = {ticker: get_stock_data(ticker) for ticker in unique_tickers}
-    
-    st.write(f"Ativos únicos na tela: {len(unique_tickers)}. Chamadas de API por ciclo: {len(unique_tickers) * 2}")
-
-
     for cliente, operacoes in list(st.session_state.clientes.items()):
         with st.expander(f"Cliente: {cliente}", expanded=True):
-            st.subheader(f"Análise de {cliente}")
+            
+            # --- CABEÇALHO DO CLIENTE COM BOTÃO DE EXCLUIR ---
+            col1, col2 = st.columns([0.95, 0.05])
+            with col1:
+                st.subheader(f"Análise de {cliente}")
+            with col2:
+                if st.button("🗑️", key=f"del_client_{cliente}", help=f"Excluir cliente {cliente} e todas as suas operações"):
+                    del st.session_state.clientes[cliente]
+                    save_data_to_firestore(st.session_state.clientes)
+                    st.rerun()
             
             if operacoes:
                 st.markdown("##### 💵 Resumo Financeiro da Carteira")
@@ -222,10 +194,7 @@ else:
             
             dados_para_df = []
             for i, op in enumerate(operacoes[:]):
-                # Usa o cache de preços em vez de buscar novamente
-                data = price_data_cache.get(op["ativo"])
-                preco_atual, nome_empresa_ou_erro, timestamp = data['price'], data['name'], data['timestamp']
-
+                preco_atual, nome_empresa_ou_erro, timestamp = get_stock_data(op["ativo"])
                 if preco_atual is None:
                     st.error(f"Ativo {op['ativo']}: {nome_empresa_ou_erro}")
                     continue
