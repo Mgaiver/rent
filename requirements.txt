@@ -5,4 +5,3 @@ streamlit-autorefresh
 google-cloud-firestore
 google-auth-oauthlib
 xlsxwriter
-polygon-api-client

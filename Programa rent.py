@@ -142,9 +142,15 @@ if "editing_operation" not in st.session_state:
 if "editing_client" not in st.session_state:
     st.session_state.editing_client = None
 
+# --- VERIFICADOR DE VERSÃO DO STREAMLIT ---
+def check_streamlit_version():
+    if not hasattr(st, 'dialog'):
+        st.error("ERRO: A sua versão do Streamlit é muito antiga para usar a função de edição. Por favor, atualize o seu arquivo `requirements.txt` para `streamlit>=1.33.0` e reinicie o aplicativo.")
+        return False
+    return True
 
 # --- DIÁLOGO DE EDIÇÃO DE CLIENTE ---
-if st.session_state.editing_client is not None:
+if st.session_state.editing_client is not None and check_streamlit_version():
     assessor_edit, old_client_name = st.session_state.editing_client
     with st.dialog(f"Editando Cliente: {old_client_name}"):
         with st.form("edit_client_form"):
@@ -167,7 +173,7 @@ if st.session_state.editing_client is not None:
                 st.rerun()
 
 # --- DIÁLOGO DE EDIÇÃO DE OPERAÇÃO ---
-if st.session_state.editing_operation is not None:
+if st.session_state.editing_operation is not None and check_streamlit_version():
     assessor_edit, cliente_edit, op_index_edit = st.session_state.editing_operation
     op_data = st.session_state.assessores[assessor_edit][cliente_edit][op_index_edit]
     
@@ -260,7 +266,6 @@ else:
                             st.rerun()
                     
                     if operacoes:
-                        # Código para exibir resumos e detalhes das operações do cliente (sem alterações)
                         st.markdown("##### 💵 Resumo Financeiro da Carteira")
                         total_comprado = sum(op['quantidade'] * op['preco_exec'] for op in operacoes if op['tipo'] == 'c')
                         total_vendido = sum(op['quantidade'] * op['preco_exec'] for op in operacoes if op['tipo'] == 'v')
