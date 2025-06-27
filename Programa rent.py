@@ -197,20 +197,26 @@ else:
                     continue
                 
                 qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
-                valor_operacao, custo = qtd * preco_exec, (qtd * preco_exec) * 0.01
+                
+                # --- NOVA LÓGICA DE CUSTO: 0.5% na entrada e 0.5% na saída (preço atual) ---
+                valor_entrada = qtd * preco_exec
+                valor_saida_atual = qtd * preco_atual
+                
+                custo_entrada = valor_entrada * 0.005
+                custo_saida = valor_saida_atual * 0.005
+                custo_total = custo_entrada + custo_saida
+                
                 lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
-                lucro_liquido = lucro_bruto - custo
-                perc_liquido = (lucro_liquido / valor_operacao) * 100 if valor_operacao > 0 else 0
+                lucro_liquido = lucro_bruto - custo_total
+                perc_liquido = (lucro_liquido / valor_entrada) * 100 if valor_entrada > 0 else 0
                 
                 # --- LÓGICA DE ALERTA VISUAL REESTRUTURADA ---
                 classe_linha = "linha-verde" if lucro_liquido >= 0 else "linha-vermelha"
-                alvo_atingido = False
                 mensagem_alvo = ""
                 tipo_alvo = ""
 
                 sg, sl = op.get('stop_gain', 0), op.get('stop_loss', 0)
                 
-                # Verifica se o preço cruzou algum alvo
                 target_price_hit = False
                 if tipo == 'c': # Compra
                     if sg > 0 and preco_atual >= sg: target_price_hit = True; mensagem_alvo = f"Alvo de Gain (R$ {sg:,.2f}) alcançado!"
@@ -219,7 +225,6 @@ else:
                     if sg > 0 and preco_atual <= sg: target_price_hit = True; mensagem_alvo = f"Alvo de Gain (R$ {sg:,.2f}) alcançado!"
                     elif sl > 0 and preco_atual >= sl: target_price_hit = True; mensagem_alvo = f"Alvo de Loss (R$ {sl:,.2f}) alcançado!"
                 
-                # Aplica o alerta visual APENAS se o resultado financeiro for consistente
                 if target_price_hit:
                     if lucro_liquido > 0:
                         classe_linha = "linha-gain"
@@ -243,7 +248,7 @@ else:
                     cols_data[2].write(f"{qtd:,}")
                     cols_data[3].write(f"R$ {preco_exec:,.2f}")
                     cols_data[4].write(f"R$ {preco_atual:,.2f}")
-                    cols_data[5].write(f"R$ {custo:,.2f}")
+                    cols_data[5].write(f"R$ {custo_total:,.2f}")
                     cols_data[6].markdown(f"<b>R$ {lucro_liquido:,.2f}</b>", unsafe_allow_html=True)
                     cols_data[7].markdown(f"<b>{perc_liquido:.2f}%</b>", unsafe_allow_html=True)
                     cols_data[8].write(op["data"])
@@ -264,7 +269,7 @@ else:
                 
                 dados_para_df.append({
                     "Ativo": op["ativo"], "Tipo": "Compra" if tipo == "c" else "Venda", "Data": op["data"], "Qtd": qtd,
-                    "Preço Exec.": preco_exec, "Preço Atual": preco_atual, "Custo (R$)": custo,
+                    "Preço Exec.": preco_exec, "Preço Atual": preco_atual, "Custo (R$)": custo_total,
                     "Lucro Líquido (R$)": lucro_liquido, "Variação Líquida (%)": perc_liquido,
                     "Stop Gain": sg, "Stop Loss": sl, "Status Alvo": status_alvo
                 })
@@ -281,7 +286,7 @@ else:
                 
                 cols_metricas = st.columns(2)
                 cols_metricas[0].metric("Lucro/Prejuízo Total Líquido", f"R$ {lucro_total_liquido:,.2f}", f"{rentabilidade_total:,.2f}% sobre o total investido", delta_color="normal")
-                cols_metricas[1].metric("Custo Total das Operações", f"R$ {custo_total:,.2f}")
+                cols_metricas[1].metric("Custo Total das Operações", value=f"R$ {custo_total:,.2f}")
                 
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
