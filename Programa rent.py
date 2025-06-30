@@ -284,7 +284,14 @@ else:
         for assessor, clientes in list(st.session_state.assessores.items()):
             with st.container(border=True):
                 st.title(f"Assessor: {assessor}")
-                # ... (código de resumo do assessor)
+                
+                assessor_total_comprado = sum(op['quantidade'] * op['preco_exec'] for ops in clientes.values() for op in ops if op['tipo'] == 'c' and op.get('status', 'ativa') == 'ativa')
+                assessor_total_vendido = sum(op['quantidade'] * op['preco_exec'] for ops in clientes.values() for op in ops if op['tipo'] == 'v' and op.get('status', 'ativa') == 'ativa')
+                st.markdown("#### 💰 Financeiro Total do Assessor (Operações Ativas)")
+                total_em_operacao = assessor_total_comprado + assessor_total_vendido
+                st.metric("Total em Operação (Long + Short)", f"R$ {total_em_operacao:,.2f}")
+                st.divider()
+
                 col_exp, col_rec = st.columns(2)
                 if col_exp.button(f"Expandir Todos ({assessor})", key=f"expand_{assessor}"):
                     st.session_state.expand_all[assessor] = True
@@ -292,21 +299,56 @@ else:
                     st.session_state.expand_all[assessor] = False
 
                 for cliente, operacoes in list(clientes.items()):
-                    operacoes_filtradas = [op for op in operacoes if (view_filter == "Todas") or (op.get('status', 'ativa') == view_filter.lower()[:-1])]
-                    if not operacoes_filtradas: continue
+                    
+                    # LÓGICA DE FILTRO CORRIGIDA
+                    if view_filter == "Ativas":
+                        operacoes_a_mostrar = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
+                    elif view_filter == "Encerradas":
+                        operacoes_a_mostrar = [op for op in operacoes if op.get('status') == 'encerrada']
+                    else:
+                        operacoes_a_mostrar = operacoes
+                    
+                    if not operacoes_a_mostrar:
+                        continue
                     
                     expanded_state = st.session_state.expand_all.get(assessor, True)
                     with st.expander(f"Cliente: {cliente}", expanded=expanded_state):
-                        # ... (código de exibição das operações)
+                        
+                        col1, col2, col3 = st.columns([0.9, 0.05, 0.05])
+                        with col1:
+                            st.subheader(f"Análise de {cliente}")
+                        with col2:
+                            if st.button("✏️", key=f"edit_client_{assessor}_{cliente}", help="Editar nome do cliente"):
+                                st.session_state.editing_client = (assessor, cliente)
+                                st.rerun()
+                        with col3:
+                            if st.button("🗑️", key=f"del_client_{assessor}_{cliente}", help=f"Excluir cliente {cliente}"):
+                                del st.session_state.assessores[assessor][cliente]
+                                save_data_to_firestore(st.session_state.assessores)
+                                st.rerun()
+                        
+                        # RESUMO FINANCEIRO DO CLIENTE (RESTAURADO)
+                        st.markdown("##### 💵 Resumo Financeiro da Carteira")
+                        total_comprado = sum(op['quantidade'] * op['preco_exec'] for op in operacoes if op['tipo'] == 'c')
+                        total_vendido = sum(op['quantidade'] * op['preco_exec'] for op in operacoes if op['tipo'] == 'v')
+                        metric_cols = st.columns(3)
+                        metric_cols[0].metric("Total na Ponta Comprada", f"R$ {total_comprado:,.2f}")
+                        metric_cols[1].metric("Total na Ponta Vendida", f"R$ {total_vendido:,.2f}")
+                        metric_cols[2].metric("Financeiro Total", f"R$ {total_comprado + total_vendido:,.2f}")
+                        st.divider()
+
+                        st.markdown("##### Detalhes das Operações")
                         headers = ["Ativo", "Tipo", "Qtd.", "Preço Exec.", "Preço Atual/Final", "Custo (R$)", "Lucro Líq.", "% Líq.", "Data", "Ações"]
                         cols_header = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2])
                         for col, header in zip(cols_header, headers): col.markdown(f"**{header}**")
                         
                         for i, op in enumerate(operacoes):
-                            if not ((view_filter == "Todas") or (op.get('status', 'ativa') == view_filter.lower()[:-1])):
+                            # FILTRO APLICADO DENTRO DO LOOP PARA MANTER ÍNDICE ORIGINAL
+                            status_op = op.get('status', 'ativa')
+                            if not (view_filter == "Todas" or (view_filter == "Ativas" and status_op == 'ativa') or (view_filter == "Encerradas" and status_op == 'encerrada')):
                                 continue
                             
-                            is_active = op.get('status', 'ativa') == 'ativa'
+                            is_active = status_op == 'ativa'
                             if is_active:
                                 preco_atual, nome_empresa, timestamp = get_stock_data(op["ativo"])
                                 if preco_atual is None:
@@ -336,14 +378,23 @@ else:
                             with st.container():
                                 st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
                                 cols_data = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2])
-                                # ... (código de exibição dos dados da operação)
+                                cols_data[0].markdown(f"<span title='{nome_empresa if is_active else 'Operação Encerrada'}'>{op['ativo']}</span>", unsafe_allow_html=True)
+                                cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
+                                cols_data[2].write(f"{qtd:,}")
+                                cols_data[3].write(f"R$ {preco_exec:,.2f}")
+                                cols_data[4].markdown(preco_display, unsafe_allow_html=True)
+                                cols_data[5].write(f"R$ {custo_total:,.2f}")
+                                cols_data[6].markdown(f"<b>R$ {lucro_liquido:,.2f}</b>", unsafe_allow_html=True)
+                                cols_data[7].markdown(f"<b>{perc_liquido:.2f}%</b>", unsafe_allow_html=True)
+                                cols_data[8].write(op["data"])
+                                
                                 action_cols = cols_data[9].columns([1,1,1] if is_active else [1])
                                 if is_active:
                                     if action_cols[0].button("✏️", key=f"edit_op_{assessor}_{cliente}_{i}"): st.session_state.editing_operation = (assessor, cliente, i); st.rerun()
                                     if action_cols[1].button("🗑️", key=f"del_op_{assessor}_{cliente}_{i}"): operacoes.pop(i); save_data_to_firestore(st.session_state.assessores); st.rerun()
                                     if action_cols[2].button("🔒", key=f"close_op_{assessor}_{cliente}_{i}"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
                                 else:
-                                    action_cols[0].write("Encerrada")
+                                    action_cols[0].write("🔒")
                                 st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
