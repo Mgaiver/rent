@@ -41,26 +41,47 @@ def init_firestore():
 
 db_client = init_firestore()
 
-DOC_ID = "dados_gerais_v3"
+DOC_ID_NEW = "dados_gerais_v3"
+DOC_ID_OLD = "dados_todos_clientes_v1" # ID do documento da estrutura antiga
 COLLECTION_NAME = "analisador_ls_data"
 
 def save_data_to_firestore(data):
     if db_client is None: return
     try:
-        doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID)
+        doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
         serializable_data = json.loads(json.dumps(data, default=str))
         doc_ref.set({"assessores": serializable_data})
     except Exception as e:
         st.error(f"Erro ao salvar no Firestore: {e}")
 
+# --- FUNÇÃO DE CARREGAMENTO COM MIGRAÇÃO ROBUSTA ---
 def load_data_from_firestore():
     if db_client is None: return {}
     try:
-        doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID)
-        doc = doc_ref.get()
-        return doc.to_dict().get("assessores", {}) if doc.exists else {}
+        # 1. Tenta carregar a nova estrutura de dados
+        new_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
+        new_doc = new_doc_ref.get()
+        if new_doc.exists and "assessores" in new_doc.to_dict():
+            return new_doc.to_dict().get("assessores", {})
+
+        # 2. Se não encontrou, tenta migrar da estrutura antiga
+        old_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_OLD)
+        old_doc = old_doc_ref.get()
+        if old_doc.exists and "clientes" in old_doc.to_dict():
+            st.info("Detectamos dados antigos. Realizando migração automática para o assessor 'Gaja'.")
+            old_clients = old_doc.to_dict().get("clientes", {})
+            if old_clients:  # Apenas migra se houver dados
+                migrated_data = {"Gaja": old_clients}
+                save_data_to_firestore(migrated_data)
+                st.success("Migração concluída! Seus dados foram movidos para a nova estrutura.")
+                # Opcional: deletar o documento antigo para não migrar novamente
+                # old_doc_ref.delete()
+                return migrated_data
+        
+        # 3. Se não há nada para carregar ou migrar
+        return {}
     except Exception as e:
-        st.error(f"Erro ao carregar do Firestore: {e}")
+        st.error(f"Erro ao carregar ou migrar dados do Firestore: {e}")
         return {}
 
 
@@ -97,19 +118,17 @@ def create_pdf_report(dataframe):
 
     pdf.set_font("Arial", 'B', 7)
     
-    # Ajusta a largura das colunas para caber na página A4 paisagem (297mm, com margens)
     col_widths = {
-        'assessor': 22, 'cliente': 22, 'Ativo': 12, 'Tipo': 12, 'Qtd': 12, 
-        'Preço Exec.': 18, 'Preço Atual': 18, 'Custo (R$)': 18, 'Lucro Líquido (R$)': 22, 
-        'Variação Líquida (%)': 20, 'Data': 18, 'Status Alvo': 18, 
-        'Preço Encerramento': 22, 'Data Encerramento': 22, 'Lucro Final (R$)': 22
+        'assessor': 22, 'cliente': 22, 'ativo': 12, 'tipo': 12, 'quantidade': 12, 
+        'preco_exec': 18, 'preco_atual': 18, 'custo_total': 18, 'lucro_liquido': 22, 
+        'perc_liquido': 20, 'data': 18, 'status': 18, 
+        'preco_encerramento': 22, 'data_encerramento': 22, 'lucro_final': 22
     }
     
-    # Garante que todas as colunas do dataframe tenham uma largura definida
     report_columns = dataframe.columns
     for col in report_columns:
         if col not in col_widths:
-            col_widths[col] = 18 # Largura padrão para colunas não especificadas
+            col_widths[col] = 18
 
     for header in report_columns:
         pdf.cell(col_widths[header], 7, str(header), 1, 0, 'C')
@@ -118,8 +137,8 @@ def create_pdf_report(dataframe):
     pdf.set_font("Arial", '', 7)
     for _, row in dataframe.iterrows():
         for col in report_columns:
-            text = str(row[col])
-            if isinstance(row[col], (int, float)):
+            text = str(row.get(col, ''))
+            if isinstance(row.get(col), (int, float)):
                 text = f"{row[col]:,.2f}"
             pdf.cell(col_widths[col], 6, text, 1)
         pdf.ln()
@@ -246,7 +265,6 @@ else:
                 if cliente not in st.session_state.assessores[assessor]:
                     st.session_state.assessores[assessor][cliente] = []
                 
-                # CORREÇÃO DO NameError:
                 new_op = {
                     "ativo": ativo, "tipo": "c" if tipo_operacao == "Compra" else "v", "quantidade": quantidade,
                     "preco_exec": preco_exec, "data": data_operacao.strftime("%d/%m/%Y"),
@@ -285,7 +303,6 @@ else:
                         for col, header in zip(cols_header, headers): col.markdown(f"**{header}**")
                         
                         for i, op in enumerate(operacoes):
-                            # Aplica o filtro aqui também para ter o índice correto
                             if not ((view_filter == "Todas") or (op.get('status', 'ativa') == view_filter.lower()[:-1])):
                                 continue
                             
@@ -324,7 +341,7 @@ else:
                                 if is_active:
                                     if action_cols[0].button("✏️", key=f"edit_op_{assessor}_{cliente}_{i}"): st.session_state.editing_operation = (assessor, cliente, i); st.rerun()
                                     if action_cols[1].button("🗑️", key=f"del_op_{assessor}_{cliente}_{i}"): operacoes.pop(i); save_data_to_firestore(st.session_state.assessores); st.rerun()
-                                    if action_cols[2].button("�", key=f"close_op_{assessor}_{cliente}_{i}"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
+                                    if action_cols[2].button("🔒", key=f"close_op_{assessor}_{cliente}_{i}"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
                                 else:
                                     action_cols[0].write("Encerrada")
                                 st.markdown("</div>", unsafe_allow_html=True)
@@ -334,14 +351,47 @@ else:
     with st.container(border=True):
         st.header("Gerar Relatório Personalizado")
         
-        # CORREÇÃO: Garante que a lista de assessores seja sempre populada
         assessores_disponiveis = list(st.session_state.assessores.keys())
         if assessores_disponiveis:
             assessores_selecionados = st.multiselect("Selecione os Assessores", options=assessores_disponiveis, default=assessores_disponiveis)
             status_relatorio = st.radio("Status das Operações para o Relatório", ["Ativas", "Encerradas", "Todas"], horizontal=True, key="report_status")
             
             if st.button("Gerar Relatório"):
-                # ... (código de geração de relatório)
-                pass # A lógica aqui já estava correta
+                report_data = []
+                for assessor in assessores_selecionados:
+                    for cliente, operacoes in st.session_state.assessores.get(assessor, {}).items():
+                        for op in operacoes:
+                            status_op = op.get('status', 'ativa')
+                            if (status_relatorio == "Todas") or \
+                               (status_relatorio == "Ativas" and status_op == 'ativa') or \
+                               (status_relatorio == "Encerradas" and status_op == 'encerrada'):
+                                
+                                op_details = op.copy()
+                                op_details['assessor'] = assessor
+                                op_details['cliente'] = cliente
+                                report_data.append(op_details)
+                
+                if report_data:
+                    df_report = pd.DataFrame(report_data)
+                    st.dataframe(df_report)
+                    
+                    col1, col2 = st.columns(2)
+                    output_excel = BytesIO()
+                    with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
+                        df_report.to_excel(writer, index=False, sheet_name="Relatorio")
+                    
+                    col1.download_button(
+                        label="📥 Baixar Relatório em Excel", data=output_excel.getvalue(),
+                        file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True
+                    )
+                    pdf_data = create_pdf_report(df_report)
+                    if pdf_data:
+                        col2.download_button(
+                            label="📄 Baixar Relatório em PDF", data=pdf_data,
+                            file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.pdf",
+                            mime="application/pdf", use_container_width=True
+                        )
+                else:
+                    st.warning("Nenhuma operação encontrada para os filtros selecionados.")
         else:
             st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
