@@ -141,7 +141,8 @@ def create_pdf_report(dataframe):
             pdf.cell(col_widths[col], 6, text, 1)
         pdf.ln()
     
-    return pdf.output()
+    # CORREÇÃO: Converte explicitamente a saída para bytes, o formato esperado pelo Streamlit.
+    return bytes(pdf.output())
 
 
 # --- FEEDBACK DE CONEXÃO ---
@@ -390,7 +391,7 @@ else:
                                     if action_cols[1].button("🔒", key=f"close_op_{assessor}_{cliente}_{i}"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
                                     if action_cols[2].button("🗑️", key=f"del_op_{assessor}_{cliente}_{i}"): operacoes.pop(i); save_data_to_firestore(st.session_state.assessores); st.rerun()
                                 else:
-                                    action_cols[0].write("�")
+                                    action_cols[0].write("🔒")
                                 st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
