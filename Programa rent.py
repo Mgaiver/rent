@@ -58,27 +58,22 @@ def save_data_to_firestore(data):
 def load_data_from_firestore():
     if db_client is None: return {}
     try:
-        # 1. Tenta carregar a nova estrutura de dados
         new_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
         new_doc = new_doc_ref.get()
         if new_doc.exists and "assessores" in new_doc.to_dict():
             return new_doc.to_dict().get("assessores", {})
 
-        # 2. Se não encontrou, tenta migrar da estrutura antiga
         old_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_OLD)
         old_doc = old_doc_ref.get()
         if old_doc.exists and "clientes" in old_doc.to_dict():
             st.info("Detectamos dados antigos. Realizando migração automática para o assessor 'Gaja'.")
             old_clients = old_doc.to_dict().get("clientes", {})
-            if old_clients:  # Apenas migra se houver dados
+            if old_clients:
                 migrated_data = {"Gaja": old_clients}
                 save_data_to_firestore(migrated_data)
                 st.success("Migração concluída! Seus dados foram movidos para a nova estrutura.")
-                # Opcional: deletar o documento antigo para não migrar novamente
-                # old_doc_ref.delete()
                 return migrated_data
         
-        # 3. Se não há nada para carregar ou migrar
         return {}
     except Exception as e:
         st.error(f"Erro ao carregar ou migrar dados do Firestore: {e}")
@@ -173,6 +168,7 @@ if "editing_operation" not in st.session_state: st.session_state.editing_operati
 if "editing_client" not in st.session_state: st.session_state.editing_client = None
 if "closing_operation" not in st.session_state: st.session_state.closing_operation = None
 if "expand_all" not in st.session_state: st.session_state.expand_all = {}
+if "report_df" not in st.session_state: st.session_state.report_df = None
 
 
 # --- RENDERIZAÇÃO CONDICIONAL ---
@@ -300,17 +296,6 @@ else:
 
                 for cliente, operacoes in list(clientes.items()):
                     
-                    # LÓGICA DE FILTRO CORRIGIDA
-                    if view_filter == "Ativas":
-                        operacoes_a_mostrar = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
-                    elif view_filter == "Encerradas":
-                        operacoes_a_mostrar = [op for op in operacoes if op.get('status') == 'encerrada']
-                    else:
-                        operacoes_a_mostrar = operacoes
-                    
-                    if not operacoes_a_mostrar:
-                        continue
-                    
                     expanded_state = st.session_state.expand_all.get(assessor, True)
                     with st.expander(f"Cliente: {cliente}", expanded=expanded_state):
                         
@@ -327,7 +312,17 @@ else:
                                 save_data_to_firestore(st.session_state.assessores)
                                 st.rerun()
                         
-                        # RESUMO FINANCEIRO DO CLIENTE (RESTAURADO)
+                        if view_filter == "Ativas":
+                            operacoes_a_mostrar = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
+                        elif view_filter == "Encerradas":
+                            operacoes_a_mostrar = [op for op in operacoes if op.get('status') == 'encerrada']
+                        else:
+                            operacoes_a_mostrar = operacoes
+                        
+                        if not operacoes_a_mostrar:
+                            st.info(f"Nenhuma operação '{view_filter}' para este cliente.")
+                            continue
+
                         st.markdown("##### 💵 Resumo Financeiro da Carteira")
                         total_comprado = sum(op['quantidade'] * op['preco_exec'] for op in operacoes if op['tipo'] == 'c')
                         total_vendido = sum(op['quantidade'] * op['preco_exec'] for op in operacoes if op['tipo'] == 'v')
@@ -343,12 +338,10 @@ else:
                         for col, header in zip(cols_header, headers): col.markdown(f"**{header}**")
                         
                         for i, op in enumerate(operacoes):
-                            # FILTRO APLICADO DENTRO DO LOOP PARA MANTER ÍNDICE ORIGINAL
-                            status_op = op.get('status', 'ativa')
-                            if not (view_filter == "Todas" or (view_filter == "Ativas" and status_op == 'ativa') or (view_filter == "Encerradas" and status_op == 'encerrada')):
+                            if op not in operacoes_a_mostrar:
                                 continue
                             
-                            is_active = status_op == 'ativa'
+                            is_active = op.get('status', 'ativa') == 'ativa'
                             if is_active:
                                 preco_atual, nome_empresa, timestamp = get_stock_data(op["ativo"])
                                 if preco_atual is None:
@@ -423,26 +416,33 @@ else:
                                 report_data.append(op_details)
                 
                 if report_data:
-                    df_report = pd.DataFrame(report_data)
-                    st.dataframe(df_report)
-                    
-                    col1, col2 = st.columns(2)
-                    output_excel = BytesIO()
-                    with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
-                        df_report.to_excel(writer, index=False, sheet_name="Relatorio")
-                    
-                    col1.download_button(
-                        label="📥 Baixar Relatório em Excel", data=output_excel.getvalue(),
-                        file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True
-                    )
-                    pdf_data = create_pdf_report(df_report)
-                    if pdf_data:
-                        col2.download_button(
-                            label="📄 Baixar Relatório em PDF", data=pdf_data,
-                            file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf", use_container_width=True
-                        )
+                    st.session_state.report_df = pd.DataFrame(report_data)
                 else:
+                    st.session_state.report_df = None
                     st.warning("Nenhuma operação encontrada para os filtros selecionados.")
+            
+            if st.session_state.report_df is not None:
+                st.dataframe(st.session_state.report_df)
+                
+                col1, col2, col3 = st.columns([2,2,1])
+                output_excel = BytesIO()
+                with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
+                    st.session_state.report_df.to_excel(writer, index=False, sheet_name="Relatorio")
+                
+                col1.download_button(
+                    label="📥 Baixar Relatório em Excel", data=output_excel.getvalue(),
+                    file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True
+                )
+                pdf_data = create_pdf_report(st.session_state.report_df)
+                if pdf_data:
+                    col2.download_button(
+                        label="📄 Baixar Relatório em PDF", data=pdf_data,
+                        file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf", use_container_width=True
+                    )
+                
+                if col3.button("Limpar Relatório", use_container_width=True):
+                    st.session_state.report_df = None
+                    st.rerun()
         else:
             st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
