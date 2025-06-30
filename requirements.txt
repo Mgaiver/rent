@@ -5,3 +5,4 @@ streamlit-autorefresh
 google-cloud-firestore
 google-auth-oauthlib
 xlsxwriter
+fpdf2
