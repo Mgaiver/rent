@@ -141,7 +141,6 @@ def create_pdf_report(dataframe):
             pdf.cell(col_widths[col], 6, text, 1)
         pdf.ln()
     
-    # A linha abaixo é a forma correta, retornando o objeto em bytes.
     return pdf.output()
 
 
@@ -376,7 +375,7 @@ else:
                                 st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
                                 cols_data = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2])
                                 cols_data[0].markdown(f"<span title='{nome_empresa if is_active else 'Operação Encerrada'}'>{op['ativo']}</span>", unsafe_allow_html=True)
-                                cols_data[1].write("🟢 Compra" if tipo == "c" else "� Venda")
+                                cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
                                 cols_data[2].write(f"{qtd:,}")
                                 cols_data[3].write(f"R$ {preco_exec:,.2f}")
                                 cols_data[4].markdown(preco_display, unsafe_allow_html=True)
@@ -391,7 +390,7 @@ else:
                                     if action_cols[1].button("🔒", key=f"close_op_{assessor}_{cliente}_{i}"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
                                     if action_cols[2].button("🗑️", key=f"del_op_{assessor}_{cliente}_{i}"): operacoes.pop(i); save_data_to_firestore(st.session_state.assessores); st.rerun()
                                 else:
-                                    action_cols[0].write("🔒")
+                                    action_cols[0].write("�")
                                 st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
@@ -404,7 +403,6 @@ else:
             assessores_selecionados = st.multiselect("Selecione os Assessores", options=assessores_disponiveis, default=assessores_disponiveis)
             status_relatorio = st.radio("Status das Operações para o Relatório", ["Ativas", "Encerradas", "Todas"], horizontal=True, key="report_status")
             
-            # Prepara os dados para download com base nos filtros
             report_data = []
             for assessor in assessores_selecionados:
                 for cliente, operacoes in st.session_state.assessores.get(assessor, {}).items():
@@ -426,7 +424,6 @@ else:
                 
                 col1, col2 = st.columns(2)
                 
-                # Botão de Download em Excel
                 output_excel = BytesIO()
                 with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
                     df_report.to_excel(writer, index=False, sheet_name="Relatorio")
@@ -436,7 +433,6 @@ else:
                     file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True
                 )
                 
-                # Botão de Download em PDF
                 pdf_data = create_pdf_report(df_report)
                 if pdf_data:
                     col2.download_button(
@@ -446,4 +442,3 @@ else:
                     )
         else:
             st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
-�
