@@ -345,5 +345,3 @@ else:
                 pass # A lógica aqui já estava correta
         else:
             st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
-
-�
