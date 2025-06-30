@@ -58,11 +58,13 @@ def save_data_to_firestore(data):
 def load_data_from_firestore():
     if db_client is None: return {}
     try:
+        # 1. Tenta carregar a nova estrutura de dados
         new_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
         new_doc = new_doc_ref.get()
         if new_doc.exists and "assessores" in new_doc.to_dict():
             return new_doc.to_dict().get("assessores", {})
 
+        # 2. Se não encontrou, tenta migrar da estrutura antiga
         old_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_OLD)
         old_doc = old_doc_ref.get()
         if old_doc.exists and "clientes" in old_doc.to_dict():
@@ -74,6 +76,7 @@ def load_data_from_firestore():
                 st.success("Migração concluída! Seus dados foram movidos para a nova estrutura.")
                 return migrated_data
         
+        # 3. Se não há nada para carregar ou migrar
         return {}
     except Exception as e:
         st.error(f"Erro ao carregar ou migrar dados do Firestore: {e}")
@@ -132,13 +135,14 @@ def create_pdf_report(dataframe):
     pdf.set_font("Arial", '', 7)
     for _, row in dataframe.iterrows():
         for col in report_columns:
-            text = str(row.get(col, ''))
+            text = str(row.get(col, '')).encode('latin-1', 'replace').decode('latin-1')
             if isinstance(row.get(col), (int, float)):
                 text = f"{row[col]:,.2f}"
             pdf.cell(col_widths[col], 6, text, 1)
         pdf.ln()
-        
-    return pdf.output(dest='S').encode('latin-1')
+    
+    # CORREÇÃO: Removido o .encode('latin-1') que causava o erro
+    return pdf.output()
 
 
 # --- FEEDBACK DE CONEXÃO ---
@@ -168,6 +172,7 @@ if "editing_operation" not in st.session_state: st.session_state.editing_operati
 if "editing_client" not in st.session_state: st.session_state.editing_client = None
 if "closing_operation" not in st.session_state: st.session_state.closing_operation = None
 if "expand_all" not in st.session_state: st.session_state.expand_all = {}
+if "report_df" not in st.session_state: st.session_state.report_df = None
 
 
 # --- RENDERIZAÇÃO CONDICIONAL ---
@@ -383,8 +388,8 @@ else:
                                 action_cols = cols_data[9].columns([1,1,1] if is_active else [1])
                                 if is_active:
                                     if action_cols[0].button("✏️", key=f"edit_op_{assessor}_{cliente}_{i}"): st.session_state.editing_operation = (assessor, cliente, i); st.rerun()
-                                    if action_cols[1].button("🗑️", key=f"del_op_{assessor}_{cliente}_{i}"): operacoes.pop(i); save_data_to_firestore(st.session_state.assessores); st.rerun()
-                                    if action_cols[2].button("🔒", key=f"close_op_{assessor}_{cliente}_{i}"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
+                                    if action_cols[1].button("🔒", key=f"close_op_{assessor}_{cliente}_{i}"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
+                                    if action_cols[2].button("🗑️", key=f"del_op_{assessor}_{cliente}_{i}"): operacoes.pop(i); save_data_to_firestore(st.session_state.assessores); st.rerun()
                                 else:
                                     action_cols[0].write("🔒")
                                 st.markdown("</div>", unsafe_allow_html=True)
