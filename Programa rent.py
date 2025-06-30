@@ -141,7 +141,7 @@ def create_pdf_report(dataframe):
             pdf.cell(col_widths[col], 6, text, 1)
         pdf.ln()
     
-    # CORREÇÃO: Removido o .encode('latin-1') que causava o erro
+    # A linha abaixo é a forma correta, retornando o objeto em bytes.
     return pdf.output()
 
 
@@ -376,7 +376,7 @@ else:
                                 st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
                                 cols_data = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2])
                                 cols_data[0].markdown(f"<span title='{nome_empresa if is_active else 'Operação Encerrada'}'>{op['ativo']}</span>", unsafe_allow_html=True)
-                                cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
+                                cols_data[1].write("🟢 Compra" if tipo == "c" else "� Venda")
                                 cols_data[2].write(f"{qtd:,}")
                                 cols_data[3].write(f"R$ {preco_exec:,.2f}")
                                 cols_data[4].markdown(preco_display, unsafe_allow_html=True)
@@ -446,3 +446,4 @@ else:
                     )
         else:
             st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
+�
