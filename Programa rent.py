@@ -168,7 +168,6 @@ if "editing_operation" not in st.session_state: st.session_state.editing_operati
 if "editing_client" not in st.session_state: st.session_state.editing_client = None
 if "closing_operation" not in st.session_state: st.session_state.closing_operation = None
 if "expand_all" not in st.session_state: st.session_state.expand_all = {}
-if "report_df" not in st.session_state: st.session_state.report_df = None
 
 
 # --- RENDERIZAÇÃO CONDICIONAL ---
@@ -400,49 +399,45 @@ else:
             assessores_selecionados = st.multiselect("Selecione os Assessores", options=assessores_disponiveis, default=assessores_disponiveis)
             status_relatorio = st.radio("Status das Operações para o Relatório", ["Ativas", "Encerradas", "Todas"], horizontal=True, key="report_status")
             
-            if st.button("Gerar Relatório"):
-                report_data = []
-                for assessor in assessores_selecionados:
-                    for cliente, operacoes in st.session_state.assessores.get(assessor, {}).items():
-                        for op in operacoes:
-                            status_op = op.get('status', 'ativa')
-                            if (status_relatorio == "Todas") or \
-                               (status_relatorio == "Ativas" and status_op == 'ativa') or \
-                               (status_relatorio == "Encerradas" and status_op == 'encerrada'):
-                                
-                                op_details = op.copy()
-                                op_details['assessor'] = assessor
-                                op_details['cliente'] = cliente
-                                report_data.append(op_details)
-                
-                if report_data:
-                    st.session_state.report_df = pd.DataFrame(report_data)
-                else:
-                    st.session_state.report_df = None
-                    st.warning("Nenhuma operação encontrada para os filtros selecionados.")
+            # Prepara os dados para download com base nos filtros
+            report_data = []
+            for assessor in assessores_selecionados:
+                for cliente, operacoes in st.session_state.assessores.get(assessor, {}).items():
+                    for op in operacoes:
+                        status_op = op.get('status', 'ativa')
+                        if (status_relatorio == "Todas") or \
+                           (status_relatorio == "Ativas" and status_op == 'ativa') or \
+                           (status_relatorio == "Encerradas" and status_op == 'encerrada'):
+                            
+                            op_details = op.copy()
+                            op_details['assessor'] = assessor
+                            op_details['cliente'] = cliente
+                            report_data.append(op_details)
             
-            if st.session_state.report_df is not None:
-                st.dataframe(st.session_state.report_df)
+            if not report_data:
+                st.warning("Nenhuma operação encontrada para os filtros selecionados.")
+            else:
+                df_report = pd.DataFrame(report_data)
                 
-                col1, col2, col3 = st.columns([2,2,1])
+                col1, col2 = st.columns(2)
+                
+                # Botão de Download em Excel
                 output_excel = BytesIO()
                 with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
-                    st.session_state.report_df.to_excel(writer, index=False, sheet_name="Relatorio")
+                    df_report.to_excel(writer, index=False, sheet_name="Relatorio")
                 
                 col1.download_button(
                     label="📥 Baixar Relatório em Excel", data=output_excel.getvalue(),
                     file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True
                 )
-                pdf_data = create_pdf_report(st.session_state.report_df)
+                
+                # Botão de Download em PDF
+                pdf_data = create_pdf_report(df_report)
                 if pdf_data:
                     col2.download_button(
                         label="📄 Baixar Relatório em PDF", data=pdf_data,
                         file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.pdf",
                         mime="application/pdf", use_container_width=True
                     )
-                
-                if col3.button("Limpar Relatório", use_container_width=True):
-                    st.session_state.report_df = None
-                    st.rerun()
         else:
             st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
