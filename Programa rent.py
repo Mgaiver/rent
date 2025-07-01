@@ -303,7 +303,8 @@ else:
             client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
 
     if client_summary:
-        cols = st.columns(len(client_summary) if len(client_summary) <= 5 else 5)
+        # CORREÇÃO: Cria sempre 5 colunas para manter o tamanho dos cards consistente
+        cols = st.columns(5) 
         for i, summary in enumerate(client_summary):
             with cols[i % 5]:
                 color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
@@ -327,7 +328,8 @@ else:
             closed_client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
     
     if closed_client_summary:
-        cols = st.columns(len(closed_client_summary) if len(closed_client_summary) <= 5 else 5)
+        # CORREÇÃO: Cria sempre 5 colunas para manter o tamanho dos cards consistente
+        cols = st.columns(5)
         for i, summary in enumerate(closed_client_summary):
             with cols[i % 5]:
                 color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
@@ -417,6 +419,10 @@ else:
                         tab_ativas, tab_encerradas = st.tabs(["Operações Ativas", "Operações Encerradas"])
 
                         def display_operation_row(op, op_index, is_active_op, assessor_name, cliente_name):
+                            qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
+                            valor_entrada = qtd * preco_exec
+                            custo_entrada = valor_entrada * 0.005
+
                             if is_active_op:
                                 preco_atual, nome_empresa, timestamp = get_stock_data(op["ativo"])
                                 if preco_atual is None:
@@ -425,27 +431,21 @@ else:
                                 valor_saida_atual = op['quantidade'] * preco_atual
                                 custo_saida = valor_saida_atual * 0.005
                                 if op['tipo'] == 'c':
-                                    lucro_bruto = (preco_atual - op['preco_exec']) * op['quantidade']
+                                    lucro_bruto = (preco_atual - preco_exec) * qtd
                                 else: # Venda
-                                    lucro_bruto = (op['preco_exec'] - preco_atual) * op['quantidade']
+                                    lucro_bruto = (preco_exec - preco_atual) * qtd
                                 preco_display = f"R$ {preco_atual:,.2f}<br><small>({timestamp})</small>"
-                            else: # Operação Encerrada
-                                preco_atual = op.get('preco_encerramento', op['preco_exec'])
-                                lucro_liquido = op.get('lucro_final', 0)
-                                perc_liquido = (lucro_liquido / (op['quantidade'] * op['preco_exec'])) * 100 if (op['quantidade'] * op['preco_exec']) > 0 else 0
-                                preco_display = f"R$ {preco_atual:,.2f}<br><small>(Encerrada)</small>"
-
-                            qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
-                            valor_entrada = qtd * preco_exec
-                            custo_entrada = valor_entrada * 0.005
-                            custo_total = custo_entrada + (custo_saida if is_active_op else valor_entrada * 0.005)
-                            
-                            if is_active_op:
+                                custo_total = custo_entrada + custo_saida
                                 lucro_liquido = lucro_bruto - custo_total
-                                perc_liquido = (lucro_liquido / valor_entrada) * 100 if valor_entrada > 0 else 0
-                            
-                            # NOVO: Cálculo do percentual bruto
+                            else: # Operação Encerrada
+                                preco_final = op.get('preco_encerramento', preco_exec)
+                                lucro_liquido = op.get('lucro_final', 0)
+                                lucro_bruto = lucro_liquido + (valor_entrada * 0.005) + ((qtd * preco_final) * 0.005)
+                                preco_display = f"R$ {preco_final:,.2f}<br><small>(Encerrada)</small>"
+                                custo_total = (valor_entrada * 0.005) + ((qtd * preco_final) * 0.005)
+
                             perc_bruto = (lucro_bruto / valor_entrada) * 100 if valor_entrada > 0 else 0
+                            perc_liquido = (lucro_liquido / valor_entrada) * 100 if valor_entrada > 0 else 0
 
                             classe_linha = "linha-encerrada" if not is_active_op else ("linha-verde" if lucro_liquido >= 0 else "linha-vermelha")
                             
@@ -453,14 +453,14 @@ else:
                                 st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
                                 cols_data = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2, 1.2])
                                 cols_data[0].markdown(f"<span title='{nome_empresa if is_active_op else 'Operação Encerrada'}'>{op['ativo']}</span>", unsafe_allow_html=True)
-                                cols_data[1].write("🟢 Compra" if tipo == "c" else "� Venda")
+                                cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
                                 cols_data[2].write(f"{qtd:,}")
                                 cols_data[3].write(f"R$ {preco_exec:,.2f}")
                                 cols_data[4].markdown(preco_display, unsafe_allow_html=True)
                                 cols_data[5].write(f"R$ {custo_total:,.2f}")
                                 cols_data[6].markdown(f"<b>R$ {lucro_liquido:,.2f}</b>", unsafe_allow_html=True)
-                                cols_data[7].markdown(f"<b>{perc_bruto:.2f}%</b>", unsafe_allow_html=True) # Exibe % Bruto
-                                cols_data[8].markdown(f"<b>{perc_liquido:.2f}%</b>", unsafe_allow_html=True) # Exibe % Líquido
+                                cols_data[7].markdown(f"<b>{perc_bruto:.2f}%</b>", unsafe_allow_html=True)
+                                cols_data[8].markdown(f"<b>{perc_liquido:.2f}%</b>", unsafe_allow_html=True)
                                 cols_data[9].write(op["data"])
                                 
                                 action_cols = cols_data[10].columns([1,1,1] if is_active_op else [1])
