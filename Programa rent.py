@@ -277,7 +277,7 @@ elif st.session_state.closing_operation:
 else:
     # --- PAINEL DINÂMICO DE OPERAÇÕES ATIVAS ---
     st.subheader("Painel Dinâmico de Clientes (Operações Ativas)")
-    active_client_summary = []
+    client_summary = []
     for assessor, clientes in st.session_state.assessores.items():
         for cliente, operacoes in clientes.items():
             active_ops = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
@@ -300,18 +300,18 @@ else:
                 total_investido += valor_entrada
             
             perc_consolidado = (total_lucro_liquido / total_investido) * 100 if total_investido > 0 else 0
-            active_client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
+            client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
 
-    if active_client_summary:
-        cols = st.columns(len(active_client_summary) if len(active_client_summary) <= 5 else 5)
-        for i, summary in enumerate(active_client_summary):
+    if client_summary:
+        cols = st.columns(len(client_summary) if len(client_summary) <= 5 else 5)
+        for i, summary in enumerate(client_summary):
             with cols[i % 5]:
                 color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
                 st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div></div>', unsafe_allow_html=True)
     else:
         st.info("Nenhum cliente com operações ativas para exibir no painel.")
 
-    # --- NOVO: PAINEL DE OPERAÇÕES ENCERRADAS ---
+    # --- PAINEL DE OPERAÇÕES ENCERRADAS ---
     st.subheader("Painel de Operações Encerradas")
     closed_client_summary = []
     for assessor, clientes in st.session_state.assessores.items():
@@ -424,9 +424,13 @@ else:
                                     return
                                 valor_saida_atual = op['quantidade'] * preco_atual
                                 custo_saida = valor_saida_atual * 0.005
-                                lucro_bruto = (preco_atual - op['preco_exec']) * op['quantidade'] if op['tipo'] == 'c' else (op['preco_exec'] - preco_atual) * op['quantidade']
+                                # CORREÇÃO DA LÓGICA DE LUCRO BRUTO
+                                if op['tipo'] == 'c':
+                                    lucro_bruto = (preco_atual - op['preco_exec']) * op['quantidade']
+                                else: # Venda
+                                    lucro_bruto = (op['preco_exec'] - preco_atual) * op['quantidade']
                                 preco_display = f"R$ {preco_atual:,.2f}<br><small>({timestamp})</small>"
-                            else:
+                            else: # Operação Encerrada
                                 preco_atual = op.get('preco_encerramento', op['preco_exec'])
                                 lucro_liquido = op.get('lucro_final', 0)
                                 perc_liquido = (lucro_liquido / (op['quantidade'] * op['preco_exec'])) * 100 if (op['quantidade'] * op['preco_exec']) > 0 else 0
