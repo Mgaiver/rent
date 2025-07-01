@@ -114,9 +114,9 @@ def create_pdf_report(dataframe):
     pdf.set_font("Arial", 'B', 7)
     
     col_widths = {
-        'assessor': 22, 'cliente': 22, 'ativo': 12, 'tipo': 12, 'quantidade': 12, 
-        'preco_exec': 18, 'preco_atual': 18, 'custo_total': 18, 'lucro_liquido': 22, 
-        'perc_liquido': 20, 'data': 18, 'status': 18, 
+        'assessor': 20, 'cliente': 20, 'ativo': 12, 'tipo': 12, 'quantidade': 12, 
+        'preco_exec': 18, 'preco_atual': 18, 'custo_total': 18, 'lucro_liquido': 20, 
+        'perc_bruto': 18, 'perc_liquido': 18, 'data': 18, 'status': 18, 
         'preco_encerramento': 22, 'data_encerramento': 22, 'lucro_final': 22
     }
     
@@ -424,7 +424,6 @@ else:
                                     return
                                 valor_saida_atual = op['quantidade'] * preco_atual
                                 custo_saida = valor_saida_atual * 0.005
-                                # CORREÇÃO DA LÓGICA DE LUCRO BRUTO
                                 if op['tipo'] == 'c':
                                     lucro_bruto = (preco_atual - op['preco_exec']) * op['quantidade']
                                 else: # Venda
@@ -444,23 +443,27 @@ else:
                             if is_active_op:
                                 lucro_liquido = lucro_bruto - custo_total
                                 perc_liquido = (lucro_liquido / valor_entrada) * 100 if valor_entrada > 0 else 0
+                            
+                            # NOVO: Cálculo do percentual bruto
+                            perc_bruto = (lucro_bruto / valor_entrada) * 100 if valor_entrada > 0 else 0
 
                             classe_linha = "linha-encerrada" if not is_active_op else ("linha-verde" if lucro_liquido >= 0 else "linha-vermelha")
                             
                             with st.container():
                                 st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
-                                cols_data = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2])
+                                cols_data = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2, 1.2])
                                 cols_data[0].markdown(f"<span title='{nome_empresa if is_active_op else 'Operação Encerrada'}'>{op['ativo']}</span>", unsafe_allow_html=True)
-                                cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
+                                cols_data[1].write("🟢 Compra" if tipo == "c" else "� Venda")
                                 cols_data[2].write(f"{qtd:,}")
                                 cols_data[3].write(f"R$ {preco_exec:,.2f}")
                                 cols_data[4].markdown(preco_display, unsafe_allow_html=True)
                                 cols_data[5].write(f"R$ {custo_total:,.2f}")
                                 cols_data[6].markdown(f"<b>R$ {lucro_liquido:,.2f}</b>", unsafe_allow_html=True)
-                                cols_data[7].markdown(f"<b>{perc_liquido:.2f}%</b>", unsafe_allow_html=True)
-                                cols_data[8].write(op["data"])
+                                cols_data[7].markdown(f"<b>{perc_bruto:.2f}%</b>", unsafe_allow_html=True) # Exibe % Bruto
+                                cols_data[8].markdown(f"<b>{perc_liquido:.2f}%</b>", unsafe_allow_html=True) # Exibe % Líquido
+                                cols_data[9].write(op["data"])
                                 
-                                action_cols = cols_data[9].columns([1,1,1] if is_active_op else [1])
+                                action_cols = cols_data[10].columns([1,1,1] if is_active_op else [1])
                                 if is_active_op:
                                     if action_cols[0].button("✏️", key=f"edit_op_{assessor_name}_{cliente_name}_{op_index}"): st.session_state.editing_operation = (assessor_name, cliente_name, op_index); st.rerun()
                                     if action_cols[1].button("🏁", key=f"close_op_{assessor_name}_{cliente_name}_{op_index}", help="Encerrar"): st.session_state.closing_operation = (assessor_name, cliente_name, op_index); st.rerun()
@@ -474,6 +477,9 @@ else:
                             if not operacoes_ativas:
                                 st.info("Nenhuma operação ativa para este cliente.")
                             else:
+                                headers = ["Ativo", "Tipo", "Qtd.", "Preço Exec.", "Preço Atual", "Custo (R$)", "Lucro Líq.", "% Bruto", "% Líq.", "Data", "Ações"]
+                                cols_header = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2, 1.2])
+                                for col, header in zip(cols_header, headers): col.markdown(f"**{header}**")
                                 for i, op in enumerate(operacoes):
                                     if op.get('status', 'ativa') == 'ativa':
                                         display_operation_row(op, i, True, assessor, cliente)
@@ -483,6 +489,9 @@ else:
                             if not operacoes_encerradas:
                                 st.info("Nenhuma operação encerrada para este cliente.")
                             else:
+                                headers = ["Ativo", "Tipo", "Qtd.", "Preço Exec.", "Preço Final", "Custo (R$)", "Lucro Líq.", "% Bruto", "% Líq.", "Data", "Ações"]
+                                cols_header = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2, 1.2])
+                                for col, header in zip(cols_header, headers): col.markdown(f"**{header}**")
                                 for i, op in enumerate(operacoes):
                                     if op.get('status') == 'encerrada':
                                         display_operation_row(op, i, False, assessor, cliente)
