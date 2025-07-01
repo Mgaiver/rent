@@ -236,7 +236,6 @@ elif st.session_state.editing_operation:
                 op_data.update({'stop_gain': new_stop_gain, 'stop_loss': new_stop_loss})
             else:
                 op_data.update({'preco_encerramento': new_preco_encerramento, 'data_encerramento': new_data_encerramento.strftime("%d/%m/%Y")})
-                # Recalcula lucro final
                 qtd, preco_exec, tipo = op_data["quantidade"], op_data["preco_exec"], op_data["tipo"]
                 valor_entrada, valor_saida = qtd * preco_exec, qtd * new_preco_encerramento
                 custo_total = (valor_entrada * 0.005) + (valor_saida * 0.005)
@@ -398,7 +397,6 @@ else:
                                 save_data_to_firestore(st.session_state.assessores)
                                 st.rerun()
                         
-                        # --- NOVO: ABAS PARA ATIVAS E ENCERRADAS ---
                         tab_ativas, tab_encerradas = st.tabs(["Operações Ativas", "Operações Encerradas"])
 
                         with tab_ativas:
@@ -406,16 +404,19 @@ else:
                             if not operacoes_ativas:
                                 st.info("Nenhuma operação ativa para este cliente.")
                             else:
-                                # ... (código de exibição de operações ativas)
-                                pass
-
+                                for i, op in enumerate(operacoes):
+                                    if op.get('status', 'ativa') != 'ativa': continue
+                                    # ... (código de exibição de operações ativas)
+                        
                         with tab_encerradas:
                             operacoes_encerradas = [op for op in operacoes if op.get('status') == 'encerrada']
                             if not operacoes_encerradas:
                                 st.info("Nenhuma operação encerrada para este cliente.")
                             else:
-                                # ... (código de exibição de operações encerradas)
-                                pass
+                                for i, op in enumerate(operacoes):
+                                    if op.get('status') != 'encerrada': continue
+                                    # ... (código de exibição de operações encerradas)
+
 
     st.divider()
     # --- SEÇÃO DE RELATÓRIOS ---
