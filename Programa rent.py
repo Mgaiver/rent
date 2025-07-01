@@ -58,13 +58,11 @@ def save_data_to_firestore(data):
 def load_data_from_firestore():
     if db_client is None: return {}
     try:
-        # 1. Tenta carregar a nova estrutura de dados
         new_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
         new_doc = new_doc_ref.get()
         if new_doc.exists and "assessores" in new_doc.to_dict():
             return new_doc.to_dict().get("assessores", {})
 
-        # 2. Se não encontrou, tenta migrar da estrutura antiga
         old_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_OLD)
         old_doc = old_doc_ref.get()
         if old_doc.exists and "clientes" in old_doc.to_dict():
@@ -76,7 +74,6 @@ def load_data_from_firestore():
                 st.success("Migração concluída! Seus dados foram movidos para a nova estrutura.")
                 return migrated_data
         
-        # 3. Se não há nada para carregar ou migrar
         return {}
     except Exception as e:
         st.error(f"Erro ao carregar ou migrar dados do Firestore: {e}")
@@ -141,7 +138,6 @@ def create_pdf_report(dataframe):
             pdf.cell(col_widths[col], 6, text, 1)
         pdf.ln()
     
-    # CORREÇÃO: Converte explicitamente a saída para bytes, o formato esperado pelo Streamlit.
     return bytes(pdf.output())
 
 
@@ -275,6 +271,45 @@ else:
                 st.rerun()
 
     st.divider()
+
+    # --- NOVO: PAINEL DINÂMICO ---
+    st.subheader("Painel Dinâmico de Clientes (Operações Ativas)")
+    client_summary = []
+    for assessor, clientes in st.session_state.assessores.items():
+        for cliente, operacoes in clientes.items():
+            active_ops = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
+            if not active_ops:
+                continue
+
+            total_lucro_liquido = 0
+            total_investido = 0
+            for op in active_ops:
+                preco_atual, _, _ = get_stock_data(op["ativo"])
+                if preco_atual is None: continue
+                
+                qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
+                valor_entrada = qtd * preco_exec
+                valor_saida_atual = qtd * preco_atual
+                custo_total = (valor_entrada * 0.005) + (valor_saida_atual * 0.005)
+                lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
+                
+                total_lucro_liquido += lucro_bruto - custo_total
+                total_investido += valor_entrada
+            
+            perc_consolidado = (total_lucro_liquido / total_investido) * 100 if total_investido > 0 else 0
+            client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
+
+    if client_summary:
+        cols = st.columns(len(client_summary))
+        for i, summary in enumerate(client_summary):
+            with cols[i]:
+                delta_color = "normal" if summary['resultado'] >= 0 else "inverse"
+                st.metric(label=summary['cliente'], value=f"{summary['resultado']:.2f}%", delta_color=delta_color)
+    else:
+        st.info("Nenhum cliente com operações ativas para exibir no painel.")
+
+
+    st.divider()
     st.subheader("Visão Geral das Carteiras")
     view_filter = st.radio("Filtrar Operações:", ["Ativas", "Encerradas", "Todas"], horizontal=True, key="view_filter")
 
@@ -341,6 +376,7 @@ else:
                         cols_header = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2])
                         for col, header in zip(cols_header, headers): col.markdown(f"**{header}**")
                         
+                        dados_para_df = []
                         for i, op in enumerate(operacoes):
                             if op not in operacoes_a_mostrar:
                                 continue
@@ -388,11 +424,26 @@ else:
                                 action_cols = cols_data[9].columns([1,1,1] if is_active else [1])
                                 if is_active:
                                     if action_cols[0].button("✏️", key=f"edit_op_{assessor}_{cliente}_{i}"): st.session_state.editing_operation = (assessor, cliente, i); st.rerun()
-                                    if action_cols[1].button("🔒", key=f"close_op_{assessor}_{cliente}_{i}"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
+                                    if action_cols[1].button("🏁", key=f"close_op_{assessor}_{cliente}_{i}", help="Encerrar operação"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
                                     if action_cols[2].button("🗑️", key=f"del_op_{assessor}_{cliente}_{i}"): operacoes.pop(i); save_data_to_firestore(st.session_state.assessores); st.rerun()
                                 else:
-                                    action_cols[0].write("🔒")
+                                    action_cols[0].write("🏁")
                                 st.markdown("</div>", unsafe_allow_html=True)
+                            
+                            op_details = op.copy()
+                            op_details['lucro_liquido'] = lucro_liquido
+                            op_details['perc_liquido'] = perc_liquido
+                            op_details['custo_total'] = custo_total
+                            dados_para_df.append(op_details)
+
+                        if dados_para_df:
+                            st.markdown("---")
+                            st.markdown("##### 📈 Resultado Consolidado do Cliente")
+                            df_cliente = pd.DataFrame(dados_para_df)
+                            lucro_total_cliente = df_cliente["lucro_liquido"].sum()
+                            st.metric("Lucro/Prejuízo Total do Cliente", f"R$ {lucro_total_cliente:,.2f}")
+                            st.dataframe(df_cliente)
+
 
     st.divider()
     # --- SEÇÃO DE RELATÓRIOS ---
