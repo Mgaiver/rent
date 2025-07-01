@@ -143,7 +143,8 @@ def create_pdf_report(dataframe):
 
 # --- FEEDBACK DE CONEXÃO ---
 if db_client:
-    st.success("💾 Conectado ao banco de dados (Firestore).")
+    # ALTERAÇÃO: Texto ajustado
+    st.success("💾 Conectado ao banco de dados.")
 else:
     st.warning("🔌 Persistência de dados desativada. Verifique as credenciais do Firebase.")
 
@@ -156,6 +157,29 @@ st.markdown("""
     .linha-gain { background-color: rgba(0, 123, 255, 0.15); border-left: 5px solid #007bff; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
     .linha-loss { background-color: rgba(111, 66, 193, 0.15); border-left: 5px solid #6f42c1; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
     .linha-encerrada { background-color: rgba(108, 117, 125, 0.15); border-left: 5px solid #6c757d; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+    
+    /* NOVO CSS PARA O PAINEL DINÂMICO */
+    .metric-card {
+        padding: 15px;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin-bottom: 10px;
+    }
+    .metric-card-green {
+        background-color: #28a745;
+    }
+    .metric-card-red {
+        background-color: #dc3545;
+    }
+    .metric-card .label {
+        font-size: 1em;
+        font-weight: bold;
+    }
+    .metric-card .value {
+        font-size: 1.5em;
+        font-weight: bolder;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -235,6 +259,52 @@ elif st.session_state.closing_operation:
 
 # MODO NORMAL (TELA PRINCIPAL)
 else:
+    # --- PAINEL DINÂMICO ---
+    st.subheader("Painel Dinâmico de Clientes (Operações Ativas)")
+    client_summary = []
+    for assessor, clientes in st.session_state.assessores.items():
+        for cliente, operacoes in clientes.items():
+            active_ops = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
+            if not active_ops:
+                continue
+
+            total_lucro_liquido = 0
+            total_investido = 0
+            for op in active_ops:
+                preco_atual, _, _ = get_stock_data(op["ativo"])
+                if preco_atual is None: continue
+                
+                qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
+                valor_entrada = qtd * preco_exec
+                valor_saida_atual = qtd * preco_atual
+                custo_total = (valor_entrada * 0.005) + (valor_saida_atual * 0.005)
+                lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
+                
+                total_lucro_liquido += lucro_bruto - custo_total
+                total_investido += valor_entrada
+            
+            perc_consolidado = (total_lucro_liquido / total_investido) * 100 if total_investido > 0 else 0
+            client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
+
+    if client_summary:
+        cols = st.columns(len(client_summary) if len(client_summary) <= 5 else 5) # Limita a 5 colunas por linha
+        col_index = 0
+        for summary in client_summary:
+            with cols[col_index]:
+                color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
+                html = f"""
+                <div class="metric-card {color_class}">
+                    <div class="label">{summary['cliente']}</div>
+                    <div class="value">{summary['resultado']:.2f}%</div>
+                </div>
+                """
+                st.markdown(html, unsafe_allow_html=True)
+            col_index = (col_index + 1) % len(cols)
+    else:
+        st.info("Nenhum cliente com operações ativas para exibir no painel.")
+
+    st.divider()
+    
     with st.form("form_operacao"):
         st.subheader("Adicionar Nova Operação")
         c1, c2, c3 = st.columns(3)
@@ -269,45 +339,6 @@ else:
                 st.session_state.assessores[assessor][cliente].append(new_op)
                 save_data_to_firestore(st.session_state.assessores)
                 st.rerun()
-
-    st.divider()
-
-    # --- NOVO: PAINEL DINÂMICO ---
-    st.subheader("Painel Dinâmico de Clientes (Operações Ativas)")
-    client_summary = []
-    for assessor, clientes in st.session_state.assessores.items():
-        for cliente, operacoes in clientes.items():
-            active_ops = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
-            if not active_ops:
-                continue
-
-            total_lucro_liquido = 0
-            total_investido = 0
-            for op in active_ops:
-                preco_atual, _, _ = get_stock_data(op["ativo"])
-                if preco_atual is None: continue
-                
-                qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
-                valor_entrada = qtd * preco_exec
-                valor_saida_atual = qtd * preco_atual
-                custo_total = (valor_entrada * 0.005) + (valor_saida_atual * 0.005)
-                lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
-                
-                total_lucro_liquido += lucro_bruto - custo_total
-                total_investido += valor_entrada
-            
-            perc_consolidado = (total_lucro_liquido / total_investido) * 100 if total_investido > 0 else 0
-            client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
-
-    if client_summary:
-        cols = st.columns(len(client_summary))
-        for i, summary in enumerate(client_summary):
-            with cols[i]:
-                delta_color = "normal" if summary['resultado'] >= 0 else "inverse"
-                st.metric(label=summary['cliente'], value=f"{summary['resultado']:.2f}%", delta_color=delta_color)
-    else:
-        st.info("Nenhum cliente com operações ativas para exibir no painel.")
-
 
     st.divider()
     st.subheader("Visão Geral das Carteiras")
