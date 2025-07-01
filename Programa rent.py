@@ -399,10 +399,55 @@ else:
                         
                         tab_ativas, tab_encerradas = st.tabs(["Operações Ativas", "Operações Encerradas"])
 
-                        # Função auxiliar para exibir uma linha de operação
-                        def display_operation_row(op, index, is_active):
-                            # ... (código de cálculo e exibição de uma única linha)
-                            pass
+                        # --- FUNÇÃO AUXILIAR PARA EXIBIR UMA LINHA DE OPERAÇÃO ---
+                        def display_operation_row(op, op_index, is_active_op, assessor_name, cliente_name):
+                            if is_active_op:
+                                preco_atual, nome_empresa, timestamp = get_stock_data(op["ativo"])
+                                if preco_atual is None:
+                                    st.error(f"Ativo {op['ativo']}: {nome_empresa}")
+                                    return
+                                valor_saida_atual = op['quantidade'] * preco_atual
+                                custo_saida = valor_saida_atual * 0.005
+                                lucro_bruto = (preco_atual - op['preco_exec']) * op['quantidade'] if op['tipo'] == 'c' else (op['preco_exec'] - preco_atual) * op['quantidade']
+                                preco_display = f"R$ {preco_atual:,.2f}<br><small>({timestamp})</small>"
+                            else:
+                                preco_atual = op.get('preco_encerramento', op['preco_exec'])
+                                lucro_liquido = op.get('lucro_final', 0)
+                                perc_liquido = (lucro_liquido / (op['quantidade'] * op['preco_exec'])) * 100 if (op['quantidade'] * op['preco_exec']) > 0 else 0
+                                preco_display = f"R$ {preco_atual:,.2f}<br><small>(Encerrada)</small>"
+
+                            qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
+                            valor_entrada = qtd * preco_exec
+                            custo_entrada = valor_entrada * 0.005
+                            custo_total = custo_entrada + (custo_saida if is_active_op else valor_entrada * 0.005)
+                            
+                            if is_active_op:
+                                lucro_liquido = lucro_bruto - custo_total
+                                perc_liquido = (lucro_liquido / valor_entrada) * 100 if valor_entrada > 0 else 0
+
+                            classe_linha = "linha-encerrada" if not is_active_op else ("linha-verde" if lucro_liquido >= 0 else "linha-vermelha")
+                            
+                            with st.container():
+                                st.markdown(f"<div class='{classe_linha}'>", unsafe_allow_html=True)
+                                cols_data = st.columns([1.5, 1, 1, 1.3, 1.5, 1.2, 1.3, 1.2, 1.2, 1.2])
+                                cols_data[0].markdown(f"<span title='{nome_empresa if is_active_op else 'Operação Encerrada'}'>{op['ativo']}</span>", unsafe_allow_html=True)
+                                cols_data[1].write("🟢 Compra" if tipo == "c" else "🔴 Venda")
+                                cols_data[2].write(f"{qtd:,}")
+                                cols_data[3].write(f"R$ {preco_exec:,.2f}")
+                                cols_data[4].markdown(preco_display, unsafe_allow_html=True)
+                                cols_data[5].write(f"R$ {custo_total:,.2f}")
+                                cols_data[6].markdown(f"<b>R$ {lucro_liquido:,.2f}</b>", unsafe_allow_html=True)
+                                cols_data[7].markdown(f"<b>{perc_liquido:.2f}%</b>", unsafe_allow_html=True)
+                                cols_data[8].write(op["data"])
+                                
+                                action_cols = cols_data[9].columns([1,1,1] if is_active_op else [1])
+                                if is_active_op:
+                                    if action_cols[0].button("✏️", key=f"edit_op_{assessor_name}_{cliente_name}_{op_index}"): st.session_state.editing_operation = (assessor_name, cliente_name, op_index); st.rerun()
+                                    if action_cols[1].button("🏁", key=f"close_op_{assessor_name}_{cliente_name}_{op_index}", help="Encerrar"): st.session_state.closing_operation = (assessor_name, cliente_name, op_index); st.rerun()
+                                    if action_cols[2].button("🗑️", key=f"del_op_{assessor_name}_{cliente_name}_{op_index}"): operacoes.pop(op_index); save_data_to_firestore(st.session_state.assessores); st.rerun()
+                                else:
+                                    if action_cols[0].button("✏️", key=f"edit_closed_op_{assessor_name}_{cliente_name}_{op_index}", help="Editar Encerrada"): st.session_state.editing_operation = (assessor_name, cliente_name, op_index); st.rerun()
+                                st.markdown("</div>", unsafe_allow_html=True)
 
                         with tab_ativas:
                             operacoes_ativas = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
@@ -411,8 +456,7 @@ else:
                             else:
                                 for i, op in enumerate(operacoes):
                                     if op.get('status', 'ativa') == 'ativa':
-                                        # display_operation_row(op, i, True)
-                                        pass # O código de exibição completo vai aqui
+                                        display_operation_row(op, i, True, assessor, cliente)
 
                         with tab_encerradas:
                             operacoes_encerradas = [op for op in operacoes if op.get('status') == 'encerrada']
@@ -421,9 +465,7 @@ else:
                             else:
                                 for i, op in enumerate(operacoes):
                                     if op.get('status') == 'encerrada':
-                                        # display_operation_row(op, i, False)
-                                        pass # O código de exibição completo vai aqui
-
+                                        display_operation_row(op, i, False, assessor, cliente)
 
     st.divider()
     # --- SEÇÃO DE RELATÓRIOS ---
