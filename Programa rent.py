@@ -399,23 +399,30 @@ else:
                         
                         tab_ativas, tab_encerradas = st.tabs(["Operações Ativas", "Operações Encerradas"])
 
+                        # Função auxiliar para exibir uma linha de operação
+                        def display_operation_row(op, index, is_active):
+                            # ... (código de cálculo e exibição de uma única linha)
+                            pass
+
                         with tab_ativas:
                             operacoes_ativas = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
                             if not operacoes_ativas:
                                 st.info("Nenhuma operação ativa para este cliente.")
                             else:
                                 for i, op in enumerate(operacoes):
-                                    if op.get('status', 'ativa') != 'ativa': continue
-                                    # ... (código de exibição de operações ativas)
-                        
+                                    if op.get('status', 'ativa') == 'ativa':
+                                        # display_operation_row(op, i, True)
+                                        pass # O código de exibição completo vai aqui
+
                         with tab_encerradas:
                             operacoes_encerradas = [op for op in operacoes if op.get('status') == 'encerrada']
                             if not operacoes_encerradas:
                                 st.info("Nenhuma operação encerrada para este cliente.")
                             else:
                                 for i, op in enumerate(operacoes):
-                                    if op.get('status') != 'encerrada': continue
-                                    # ... (código de exibição de operações encerradas)
+                                    if op.get('status') == 'encerrada':
+                                        # display_operation_row(op, i, False)
+                                        pass # O código de exibição completo vai aqui
 
 
     st.divider()
