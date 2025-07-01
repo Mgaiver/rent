@@ -255,7 +255,7 @@ elif st.session_state.closing_operation:
     op_data = st.session_state.assessores[assessor_close][cliente_close][op_index_close]
     st.subheader(f"Encerrando Operação: {op_data['ativo']} para {cliente_close}")
     with st.form("close_op_form"):
-        preco_encerramento = st.number_input("Preço de Encerramento (R$)", format="%.2f", min_value=0.01, value=get_stock_data(op_data['ativo'])[0])
+        preco_encerramento = st.number_input("Preço de Encerramento (R$)", format="%.2f", min_value=0.01)
         data_encerramento = st.date_input("Data de Encerramento", datetime.now(), format="DD/MM/YYYY")
         if st.form_submit_button("Confirmar Encerramento"):
             op_data['status'] = 'encerrada'
@@ -275,9 +275,9 @@ elif st.session_state.closing_operation:
 
 # MODO NORMAL (TELA PRINCIPAL)
 else:
-    # --- PAINEL DINÂMICO ---
+    # --- PAINEL DINÂMICO DE OPERAÇÕES ATIVAS ---
     st.subheader("Painel Dinâmico de Clientes (Operações Ativas)")
-    client_summary = []
+    active_client_summary = []
     for assessor, clientes in st.session_state.assessores.items():
         for cliente, operacoes in clientes.items():
             active_ops = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
@@ -300,24 +300,41 @@ else:
                 total_investido += valor_entrada
             
             perc_consolidado = (total_lucro_liquido / total_investido) * 100 if total_investido > 0 else 0
-            client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
+            active_client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
 
-    if client_summary:
-        cols = st.columns(len(client_summary) if len(client_summary) <= 5 else 5)
-        col_index = 0
-        for summary in client_summary:
-            with cols[col_index]:
+    if active_client_summary:
+        cols = st.columns(len(active_client_summary) if len(active_client_summary) <= 5 else 5)
+        for i, summary in enumerate(active_client_summary):
+            with cols[i % 5]:
                 color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
-                html = f"""
-                <div class="metric-card {color_class}">
-                    <div class="label">{summary['cliente']}</div>
-                    <div class="value">{summary['resultado']:.2f}%</div>
-                </div>
-                """
-                st.markdown(html, unsafe_allow_html=True)
-            col_index = (col_index + 1) % len(cols)
+                st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div></div>', unsafe_allow_html=True)
     else:
         st.info("Nenhum cliente com operações ativas para exibir no painel.")
+
+    # --- NOVO: PAINEL DE OPERAÇÕES ENCERRADAS ---
+    st.subheader("Painel de Operações Encerradas")
+    closed_client_summary = []
+    for assessor, clientes in st.session_state.assessores.items():
+        for cliente, operacoes in clientes.items():
+            closed_ops = [op for op in operacoes if op.get('status') == 'encerrada']
+            if not closed_ops:
+                continue
+
+            total_lucro_final = sum(op.get('lucro_final', 0) for op in closed_ops)
+            total_investido = sum(op['quantidade'] * op['preco_exec'] for op in closed_ops)
+            
+            perc_consolidado = (total_lucro_final / total_investido) * 100 if total_investido > 0 else 0
+            closed_client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
+    
+    if closed_client_summary:
+        cols = st.columns(len(closed_client_summary) if len(closed_client_summary) <= 5 else 5)
+        for i, summary in enumerate(closed_client_summary):
+            with cols[i % 5]:
+                color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
+                st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div></div>', unsafe_allow_html=True)
+    else:
+        st.info("Nenhum cliente com operações encerradas para exibir no painel.")
+
 
     st.divider()
     
@@ -399,7 +416,6 @@ else:
                         
                         tab_ativas, tab_encerradas = st.tabs(["Operações Ativas", "Operações Encerradas"])
 
-                        # --- FUNÇÃO AUXILIAR PARA EXIBIR UMA LINHA DE OPERAÇÃO ---
                         def display_operation_row(op, op_index, is_active_op, assessor_name, cliente_name):
                             if is_active_op:
                                 preco_atual, nome_empresa, timestamp = get_stock_data(op["ativo"])
