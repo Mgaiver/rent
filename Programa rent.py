@@ -21,11 +21,11 @@ except ImportError:
     FPDF_AVAILABLE = False
 
 # --- Configurações da Página ---
-st.set_page_config(page_title="Analisador de Long & Short", layout="wide")
-st.title("🔁 Analisador de Long & Short")
+st.set_page_config(page_title="Acompanhamento de Long & Short", layout="wide")
+st.title("🔁 Acompanhamento de Long & Short")
 
 # --- Atualização Automática ---
-st_autorefresh(interval=15000, key="datarefresh")
+st_autorefresh(interval=30000, key="datarefresh")
 
 
 # --- Configuração do Firestore ---
@@ -58,11 +58,13 @@ def save_data_to_firestore(data):
 def load_data_from_firestore():
     if db_client is None: return {}
     try:
+        # 1. Tenta carregar a nova estrutura de dados
         new_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
         new_doc = new_doc_ref.get()
         if new_doc.exists and "assessores" in new_doc.to_dict():
             return new_doc.to_dict().get("assessores", {})
 
+        # 2. Se não encontrou, tenta migrar da estrutura antiga
         old_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_OLD)
         old_doc = old_doc_ref.get()
         if old_doc.exists and "clientes" in old_doc.to_dict():
@@ -74,6 +76,7 @@ def load_data_from_firestore():
                 st.success("Migração concluída! Seus dados foram movidos para a nova estrutura.")
                 return migrated_data
         
+        # 3. Se não há nada para carregar ou migrar
         return {}
     except Exception as e:
         st.error(f"Erro ao carregar ou migrar dados do Firestore: {e}")
@@ -143,7 +146,6 @@ def create_pdf_report(dataframe):
 
 # --- FEEDBACK DE CONEXÃO ---
 if db_client:
-    # ALTERAÇÃO: Texto ajustado
     st.success("💾 Conectado ao banco de dados.")
 else:
     st.warning("🔌 Persistência de dados desativada. Verifique as credenciais do Firebase.")
@@ -158,7 +160,6 @@ st.markdown("""
     .linha-loss { background-color: rgba(111, 66, 193, 0.15); border-left: 5px solid #6f42c1; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
     .linha-encerrada { background-color: rgba(108, 117, 125, 0.15); border-left: 5px solid #6c757d; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
     
-    /* NOVO CSS PARA O PAINEL DINÂMICO */
     .metric-card {
         padding: 15px;
         border-radius: 10px;
@@ -240,7 +241,7 @@ elif st.session_state.closing_operation:
     st.subheader(f"Encerrando Operação: {op_data['ativo']} para {cliente_close}")
     with st.form("close_op_form"):
         preco_encerramento = st.number_input("Preço de Encerramento (R$)", format="%.2f", min_value=0.01, value=get_stock_data(op_data['ativo'])[0])
-        data_encerramento = st.date_input("Data de Encerramento", datetime.now())
+        data_encerramento = st.date_input("Data de Encerramento", datetime.now(), format="DD/MM/YYYY")
         if st.form_submit_button("Confirmar Encerramento"):
             op_data['status'] = 'encerrada'
             op_data['preco_encerramento'] = preco_encerramento
@@ -458,7 +459,13 @@ else:
                                     if action_cols[1].button("🏁", key=f"close_op_{assessor}_{cliente}_{i}", help="Encerrar operação"): st.session_state.closing_operation = (assessor, cliente, i); st.rerun()
                                     if action_cols[2].button("🗑️", key=f"del_op_{assessor}_{cliente}_{i}"): operacoes.pop(i); save_data_to_firestore(st.session_state.assessores); st.rerun()
                                 else:
-                                    action_cols[0].write("🏁")
+                                    if action_cols[0].button("🔄", key=f"reopen_op_{assessor}_{cliente}_{i}", help="Reabrir operação para edição"):
+                                        op['status'] = 'ativa'
+                                        op.pop('preco_encerramento', None)
+                                        op.pop('data_encerramento', None)
+                                        op.pop('lucro_final', None)
+                                        save_data_to_firestore(st.session_state.assessores)
+                                        st.rerun()
                                 st.markdown("</div>", unsafe_allow_html=True)
                             
                             op_details = op.copy()
