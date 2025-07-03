@@ -458,7 +458,10 @@ else:
                             else: # Operação Encerrada
                                 preco_final = op.get('preco_encerramento', preco_exec)
                                 lucro_liquido = op.get('lucro_final', 0)
-                                lucro_bruto = lucro_liquido + (valor_entrada * 0.005) + ((qtd * preco_final) * 0.005)
+                                if op['tipo'] == 'c':
+                                    lucro_bruto = (preco_final - preco_exec) * qtd
+                                else: # Venda
+                                    lucro_bruto = (preco_exec - preco_final) * qtd
                                 preco_display = f"R$ {preco_final:,.2f}<br><small>(Encerrada)</small>"
                                 custo_total = (valor_entrada * 0.005) + ((qtd * preco_final) * 0.005)
 
