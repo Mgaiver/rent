@@ -5,14 +5,6 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
 import json
-import locale
-
-# Configura o locale para português para exibir o nome do mês corretamente
-try:
-    locale.setlocale(locale.LC_TIME, 'pt_BR.UTF-8')
-except locale.Error:
-    st.warning("Locale pt_BR não encontrado. O nome do mês pode ser exibido em inglês.")
-
 
 # Tenta importar as bibliotecas do Google Cloud e FPDF.
 try:
@@ -394,9 +386,8 @@ else:
                 # --- LÓGICA CORRIGIDA PARA EXIBIÇÃO DAS MÉTRICAS DO ASSESSOR ---
                 st.markdown("#### 💰 Resumo Financeiro do Assessor")
                 
-                metric_cols = st.columns(2)
+                metric_cols = st.columns(3)
                 
-                # Métrica 1: Total em Operação (Ativas)
                 total_em_operacao = sum(
                     op['quantidade'] * op['preco_exec']
                     for ops in clientes.values()
@@ -404,13 +395,15 @@ else:
                 )
                 metric_cols[0].metric("Total em Operação (Ativas)", f"R$ {total_em_operacao:,.2f}")
                 
-                # Métrica 2: Resultado Encerrado (Mês Anterior)
                 today = datetime.now()
                 last_day_of_last_month = today.replace(day=1) - timedelta(days=1)
                 target_month = last_day_of_last_month.month
                 target_year = last_day_of_last_month.year
-                month_name = last_day_of_last_month.strftime("%B").capitalize()
+                
+                meses_em_portugues = {1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
+                month_name = meses_em_portugues.get(target_month, "")
 
+                financeiro_encerrado_mes = 0
                 resultado_encerrado_mes = 0
                 for ops in clientes.values():
                     for op in ops:
@@ -418,11 +411,13 @@ else:
                             try:
                                 data_encerramento_dt = datetime.strptime(op['data_encerramento'], "%d/%m/%Y")
                                 if data_encerramento_dt.month == target_month and data_encerramento_dt.year == target_year:
+                                    financeiro_encerrado_mes += op.get('quantidade', 0) * op.get('preco_encerramento', 0)
                                     resultado_encerrado_mes += op.get('lucro_final', 0)
                             except (ValueError, TypeError):
                                 continue
                                 
-                metric_cols[1].metric(f"Resultado Encerrado ({month_name})", f"R$ {resultado_encerrado_mes:,.2f}")
+                metric_cols[1].metric(f"Financeiro Encerrado ({month_name})", f"R$ {financeiro_encerrado_mes:,.2f}")
+                metric_cols[2].metric(f"Resultado Encerrado ({month_name})", f"R$ {resultado_encerrado_mes:,.2f}")
                 
                 st.divider()
 
