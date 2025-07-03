@@ -487,7 +487,7 @@ else:
                                 action_cols = cols_data[10].columns([1,1,1] if is_active_op else [1])
                                 if is_active_op:
                                     if action_cols[0].button("✏️", key=f"edit_op_{assessor_name}_{cliente_name}_{op_index}"): st.session_state.editing_operation = (assessor_name, cliente_name, op_index); st.rerun()
-                                    if action_cols[1].button("🏁", key=f"close_op_{assessor_name}_{cliente_name}_{op_index}", help="Encerrar"): st.session_state.closing_operation = (assessor_name, cliente_name, op_index); st.rerun()
+                                    if action_cols[1].button("�", key=f"close_op_{assessor_name}_{cliente_name}_{op_index}", help="Encerrar"): st.session_state.closing_operation = (assessor_name, cliente_name, op_index); st.rerun()
                                     if action_cols[2].button("🗑️", key=f"del_op_{assessor_name}_{cliente_name}_{op_index}"): operacoes.pop(op_index); save_data_to_firestore(st.session_state.assessores); st.rerun()
                                 else:
                                     if action_cols[0].button("✏️", key=f"edit_closed_op_{assessor_name}_{cliente_name}_{op_index}", help="Editar Encerrada"): st.session_state.editing_operation = (assessor_name, cliente_name, op_index); st.rerun()
@@ -566,3 +566,4 @@ else:
                     )
         else:
             st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
+�
