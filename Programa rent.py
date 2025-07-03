@@ -386,7 +386,6 @@ else:
                 assessor_total_comprado = sum(op['quantidade'] * op['preco_exec'] for ops in clientes.values() for op in ops if op['tipo'] == 'c' and op.get('status', 'ativa') == 'ativa')
                 assessor_total_vendido = sum(op['quantidade'] * op['preco_exec'] for ops in clientes.values() for op in ops if op['tipo'] == 'v' and op.get('status', 'ativa') == 'ativa')
                 
-                # CÁLCULO DO RESULTADO ENCERRADO NO MÊS ANTERIOR
                 today = datetime.now()
                 last_day_of_last_month = today.replace(day=1) - timedelta(days=1)
                 last_month = last_day_of_last_month.month
