@@ -5,6 +5,14 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
 import json
+import locale
+
+# Configura o locale para português para exibir o nome do mês corretamente
+try:
+    locale.setlocale(locale.LC_TIME, 'pt_BR.UTF-8')
+except locale.Error:
+    st.warning("Locale pt_BR não encontrado. O nome do mês pode ser exibido em inglês.")
+
 
 # Tenta importar as bibliotecas do Google Cloud e FPDF.
 try:
@@ -383,31 +391,39 @@ else:
             with st.container(border=True):
                 st.title(f"Assessor: {assessor}")
                 
-                assessor_total_comprado = sum(op['quantidade'] * op['preco_exec'] for ops in clientes.values() for op in ops if op['tipo'] == 'c' and op.get('status', 'ativa') == 'ativa')
-                assessor_total_vendido = sum(op['quantidade'] * op['preco_exec'] for ops in clientes.values() for op in ops if op['tipo'] == 'v' and op.get('status', 'ativa') == 'ativa')
+                # --- LÓGICA CORRIGIDA PARA EXIBIÇÃO DAS MÉTRICAS DO ASSESSOR ---
+                st.markdown("#### 💰 Resumo Financeiro do Assessor")
                 
+                metric_cols = st.columns(2)
+                
+                # Métrica 1: Total em Operação (Ativas)
+                total_em_operacao = sum(
+                    op['quantidade'] * op['preco_exec']
+                    for ops in clientes.values()
+                    for op in ops if op.get('status', 'ativa') == 'ativa'
+                )
+                metric_cols[0].metric("Total em Operação (Ativas)", f"R$ {total_em_operacao:,.2f}")
+                
+                # Métrica 2: Resultado Encerrado (Mês Anterior)
                 today = datetime.now()
                 last_day_of_last_month = today.replace(day=1) - timedelta(days=1)
-                last_month = last_day_of_last_month.month
-                last_month_year = last_day_of_last_month.year
-                
+                target_month = last_day_of_last_month.month
+                target_year = last_day_of_last_month.year
+                month_name = last_day_of_last_month.strftime("%B").capitalize()
+
                 resultado_encerrado_mes = 0
                 for ops in clientes.values():
                     for op in ops:
                         if op.get('status') == 'encerrada' and 'data_encerramento' in op:
                             try:
                                 data_encerramento_dt = datetime.strptime(op['data_encerramento'], "%d/%m/%Y")
-                                if data_encerramento_dt.month == last_month and data_encerramento_dt.year == last_month_year:
+                                if data_encerramento_dt.month == target_month and data_encerramento_dt.year == target_year:
                                     resultado_encerrado_mes += op.get('lucro_final', 0)
                             except (ValueError, TypeError):
                                 continue
-
-                st.markdown("#### 💰 Financeiro Total do Assessor")
-                metric_cols = st.columns(2)
-                total_em_operacao = assessor_total_comprado + assessor_total_vendido
-                metric_cols[0].metric("Total em Operação (Ativas)", f"R$ {total_em_operacao:,.2f}")
-                month_name = last_day_of_last_month.strftime("%B").capitalize()
+                                
                 metric_cols[1].metric(f"Resultado Encerrado ({month_name})", f"R$ {resultado_encerrado_mes:,.2f}")
+                
                 st.divider()
 
                 col_exp, col_rec = st.columns(2)
@@ -487,7 +503,7 @@ else:
                                 action_cols = cols_data[10].columns([1,1,1] if is_active_op else [1])
                                 if is_active_op:
                                     if action_cols[0].button("✏️", key=f"edit_op_{assessor_name}_{cliente_name}_{op_index}"): st.session_state.editing_operation = (assessor_name, cliente_name, op_index); st.rerun()
-                                    if action_cols[1].button("�", key=f"close_op_{assessor_name}_{cliente_name}_{op_index}", help="Encerrar"): st.session_state.closing_operation = (assessor_name, cliente_name, op_index); st.rerun()
+                                    if action_cols[1].button("🏁", key=f"close_op_{assessor_name}_{cliente_name}_{op_index}", help="Encerrar"): st.session_state.closing_operation = (assessor_name, cliente_name, op_index); st.rerun()
                                     if action_cols[2].button("🗑️", key=f"del_op_{assessor_name}_{cliente_name}_{op_index}"): operacoes.pop(op_index); save_data_to_firestore(st.session_state.assessores); st.rerun()
                                 else:
                                     if action_cols[0].button("✏️", key=f"edit_closed_op_{assessor_name}_{cliente_name}_{op_index}", help="Editar Encerrada"): st.session_state.editing_operation = (assessor_name, cliente_name, op_index); st.rerun()
@@ -566,4 +582,3 @@ else:
                     )
         else:
             st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
-�
