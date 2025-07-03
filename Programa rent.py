@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
 import json
 
@@ -303,7 +303,6 @@ else:
             client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
 
     if client_summary:
-        # CORREÇÃO: Cria sempre 5 colunas para manter o tamanho dos cards consistente
         cols = st.columns(5) 
         for i, summary in enumerate(client_summary):
             with cols[i % 5]:
@@ -328,7 +327,6 @@ else:
             closed_client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
     
     if closed_client_summary:
-        # CORREÇÃO: Cria sempre 5 colunas para manter o tamanho dos cards consistente
         cols = st.columns(5)
         for i, summary in enumerate(closed_client_summary):
             with cols[i % 5]:
@@ -387,9 +385,30 @@ else:
                 
                 assessor_total_comprado = sum(op['quantidade'] * op['preco_exec'] for ops in clientes.values() for op in ops if op['tipo'] == 'c' and op.get('status', 'ativa') == 'ativa')
                 assessor_total_vendido = sum(op['quantidade'] * op['preco_exec'] for ops in clientes.values() for op in ops if op['tipo'] == 'v' and op.get('status', 'ativa') == 'ativa')
-                st.markdown("#### 💰 Financeiro Total do Assessor (Operações Ativas)")
+                
+                # CÁLCULO DO RESULTADO ENCERRADO NO MÊS ANTERIOR
+                today = datetime.now()
+                last_day_of_last_month = today.replace(day=1) - timedelta(days=1)
+                last_month = last_day_of_last_month.month
+                last_month_year = last_day_of_last_month.year
+                
+                resultado_encerrado_mes = 0
+                for ops in clientes.values():
+                    for op in ops:
+                        if op.get('status') == 'encerrada' and 'data_encerramento' in op:
+                            try:
+                                data_encerramento_dt = datetime.strptime(op['data_encerramento'], "%d/%m/%Y")
+                                if data_encerramento_dt.month == last_month and data_encerramento_dt.year == last_month_year:
+                                    resultado_encerrado_mes += op.get('lucro_final', 0)
+                            except (ValueError, TypeError):
+                                continue
+
+                st.markdown("#### 💰 Financeiro Total do Assessor")
+                metric_cols = st.columns(2)
                 total_em_operacao = assessor_total_comprado + assessor_total_vendido
-                st.metric("Total em Operação (Long + Short)", f"R$ {total_em_operacao:,.2f}")
+                metric_cols[0].metric("Total em Operação (Ativas)", f"R$ {total_em_operacao:,.2f}")
+                month_name = last_day_of_last_month.strftime("%B").capitalize()
+                metric_cols[1].metric(f"Resultado Encerrado ({month_name})", f"R$ {resultado_encerrado_mes:,.2f}")
                 st.divider()
 
                 col_exp, col_rec = st.columns(2)
