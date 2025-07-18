@@ -50,7 +50,6 @@ def init_firestore():
 db_client = init_firestore()
 
 DOC_ID_NEW = "dados_gerais_v3"
-DOC_ID_OLD = "dados_todos_clientes_v1" # ID do documento da estrutura antiga
 COLLECTION_NAME = "analisador_ls_data"
 
 def save_data_to_firestore(data):
@@ -66,31 +65,19 @@ def save_data_to_firestore(data):
 def load_data_from_firestore():
     if db_client is None: return {"assessores": {}, "potenciais": {}}
     try:
-        new_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
-        new_doc = new_doc_ref.get()
-        if new_doc.exists and "assessores" in new_doc.to_dict():
-            return new_doc.to_dict()
-
-        old_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_OLD)
-        old_doc = old_doc_ref.get()
-        if old_doc.exists and "clientes" in old_doc.to_dict():
-            st.info("Detectamos dados antigos. Realizando migração automática para o assessor 'Gaja'.")
-            old_clients = old_doc.to_dict().get("clientes", {})
-            if old_clients:
-                # Adiciona o status 'ativa' às operações antigas durante a migração
-                for client_ops in old_clients.values():
-                    for op in client_ops:
-                        if 'status' not in op:
-                            op['status'] = 'ativa'
-                
-                migrated_data = {"assessores": {"Gaja": old_clients}, "potenciais": {}}
-                save_data_to_firestore(migrated_data)
-                st.success("Migração concluída! Seus dados foram movidos para a nova estrutura.")
-                return migrated_data
-        
+        doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            # Garante que as chaves principais sempre existam
+            if "assessores" not in data:
+                data["assessores"] = {}
+            if "potenciais" not in data:
+                data["potenciais"] = {}
+            return data
         return {"assessores": {}, "potenciais": {}}
     except Exception as e:
-        st.error(f"Erro ao carregar ou migrar dados do Firestore: {e}")
+        st.error(f"Erro ao carregar dados do Firestore: {e}")
         return {"assessores": {}, "potenciais": {}}
 
 
