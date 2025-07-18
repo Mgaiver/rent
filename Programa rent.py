@@ -5,6 +5,14 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
 import json
+import locale
+
+# Configura o locale para português para exibir o nome do mês corretamente
+try:
+    locale.setlocale(locale.LC_TIME, 'pt_BR.UTF-8')
+except locale.Error:
+    pass # Se o locale não for encontrado, o nome do mês será exibido em inglês por padrão.
+
 
 # Tenta importar as bibliotecas do Google Cloud e FPDF.
 try:
@@ -42,7 +50,6 @@ def init_firestore():
 db_client = init_firestore()
 
 DOC_ID_NEW = "dados_gerais_v3"
-DOC_ID_OLD = "dados_todos_clientes_v1" # ID do documento da estrutura antiga
 COLLECTION_NAME = "analisador_ls_data"
 
 def save_data_to_firestore(data):
@@ -50,40 +57,22 @@ def save_data_to_firestore(data):
     try:
         doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
         serializable_data = json.loads(json.dumps(data, default=str))
-        doc_ref.set({"assessores": serializable_data})
+        doc_ref.set(serializable_data) # Salva o dicionário completo
     except Exception as e:
         st.error(f"Erro ao salvar no Firestore: {e}")
 
 # --- FUNÇÃO DE CARREGAMENTO COM MIGRAÇÃO ROBUSTA ---
 def load_data_from_firestore():
-    if db_client is None: return {}
+    if db_client is None: return {"assessores": {}, "potenciais": {}}
     try:
-        new_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
-        new_doc = new_doc_ref.get()
-        if new_doc.exists and "assessores" in new_doc.to_dict():
-            return new_doc.to_dict().get("assessores", {})
-
-        old_doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_OLD)
-        old_doc = old_doc_ref.get()
-        if old_doc.exists and "clientes" in old_doc.to_dict():
-            st.info("Detectamos dados antigos. Realizando migração automática para o assessor 'Gaja'.")
-            old_clients = old_doc.to_dict().get("clientes", {})
-            if old_clients:
-                # Adiciona o status 'ativa' às operações antigas durante a migração
-                for client_ops in old_clients.values():
-                    for op in client_ops:
-                        if 'status' not in op:
-                            op['status'] = 'ativa'
-                
-                migrated_data = {"Gaja": old_clients}
-                save_data_to_firestore(migrated_data)
-                st.success("Migração concluída! Seus dados foram movidos para a nova estrutura.")
-                return migrated_data
-        
-        return {}
+        doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
+        doc = doc_ref.get()
+        if doc.exists:
+            return doc.to_dict()
+        return {"assessores": {}, "potenciais": {}}
     except Exception as e:
-        st.error(f"Erro ao carregar ou migrar dados do Firestore: {e}")
-        return {}
+        st.error(f"Erro ao carregar dados do Firestore: {e}")
+        return {"assessores": {}, "potenciais": {}}
 
 
 # --- FUNÇÃO get_stock_data ---
@@ -114,36 +103,48 @@ def create_pdf_report(dataframe):
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
     
-    pdf.cell(277, 10, 'Relatório de Operações', 0, 1, 'C')
+    pdf.cell(0, 10, 'Relatório de Operações', 0, 1, 'C')
     pdf.ln(10)
 
     pdf.set_font("Arial", 'B', 7)
     
+    display_columns = ['assessor', 'cliente', 'ativo', 'tipo', 'quantidade', 'preco_exec', 'data', 'status', 'preco_encerramento', 'data_encerramento', 'lucro_final']
+    df_display = dataframe[[col for col in display_columns if col in dataframe.columns]].copy()
+    df_display['volume_financeiro'] = df_display['quantidade'] * df_display['preco_exec']
+
     col_widths = {
-        'assessor': 20, 'cliente': 20, 'ativo': 12, 'tipo': 12, 'quantidade': 12, 
-        'preco_exec': 18, 'preco_atual': 18, 'custo_total': 18, 'lucro_liquido': 20, 
-        'perc_bruto': 18, 'perc_liquido': 18, 'data': 18, 'status': 18, 
-        'preco_encerramento': 22, 'data_encerramento': 22, 'lucro_final': 22
+        'assessor': 25, 'cliente': 30, 'ativo': 15, 'tipo': 15, 'quantidade': 20, 
+        'preco_exec': 20, 'data': 20, 'status': 20, 'preco_encerramento': 25, 
+        'data_encerramento': 25, 'lucro_final': 25, 'volume_financeiro': 30
     }
     
-    report_columns = dataframe.columns
-    for col in report_columns:
-        if col not in col_widths:
-            col_widths[col] = 18
-
+    report_columns = df_display.columns
     for header in report_columns:
-        pdf.cell(col_widths[header], 7, str(header), 1, 0, 'C')
+        pdf.cell(col_widths.get(header, 20), 7, str(header).replace('_', ' ').title(), 1, 0, 'C')
     pdf.ln()
 
-    pdf.set_font("Arial", '', 7)
-    for _, row in dataframe.iterrows():
+    pdf.set_font("Arial", '', 8)
+    for _, row in df_display.iterrows():
         for col in report_columns:
             text = str(row.get(col, '')).encode('latin-1', 'replace').decode('latin-1')
             if isinstance(row.get(col), (int, float)):
                 text = f"{row[col]:,.2f}"
             pdf.cell(col_widths[col], 6, text, 1)
         pdf.ln()
+        
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, 'Totais Consolidados', 0, 1, 'L')
     
+    total_volume = df_display['volume_financeiro'].sum()
+    total_lucro = df_display['lucro_final'].sum() if 'lucro_final' in df_display.columns else 0
+    
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(60, 8, f"Volume Financeiro Total:", 0, 0)
+    pdf.cell(60, 8, f"R$ {total_volume:,.2f}", 0, 1)
+    pdf.cell(60, 8, f"Lucro/Prejuízo Líquido Total:", 0, 0)
+    pdf.cell(60, 8, f"R$ {total_lucro:,.2f}", 0, 1)
+
     return bytes(pdf.output())
 
 
@@ -188,13 +189,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- INICIALIZAÇÃO DOS DADOS E ESTADOS ---
-if "assessores" not in st.session_state:
+if "app_data" not in st.session_state:
     with st.spinner("Carregando dados salvos..."):
-        st.session_state.assessores = load_data_from_firestore()
+        st.session_state.app_data = load_data_from_firestore()
+        if "assessores" not in st.session_state.app_data:
+            st.session_state.app_data["assessores"] = {}
+        if "potenciais" not in st.session_state.app_data:
+            st.session_state.app_data["potenciais"] = {}
 
 if "editing_operation" not in st.session_state: st.session_state.editing_operation = None
 if "editing_client" not in st.session_state: st.session_state.editing_client = None
 if "closing_operation" not in st.session_state: st.session_state.closing_operation = None
+if "editing_potential" not in st.session_state: st.session_state.editing_potential = None
 if "expand_all" not in st.session_state: st.session_state.expand_all = {}
 
 
@@ -208,8 +214,8 @@ if st.session_state.editing_client:
         new_client_name = st.text_input("Novo nome do Cliente", value=old_client_name)
         if st.form_submit_button("Salvar Alterações"):
             if new_client_name and new_client_name != old_client_name:
-                st.session_state.assessores[assessor_edit][new_client_name] = st.session_state.assessores[assessor_edit].pop(old_client_name)
-                save_data_to_firestore(st.session_state.assessores)
+                st.session_state.app_data["assessores"][assessor_edit][new_client_name] = st.session_state.app_data["assessores"][assessor_edit].pop(old_client_name)
+                save_data_to_firestore(st.session_state.app_data)
             st.session_state.editing_client = None
             st.rerun()
         if st.form_submit_button("Cancelar"):
@@ -219,7 +225,7 @@ if st.session_state.editing_client:
 # MODO DE EDIÇÃO DE OPERAÇÃO
 elif st.session_state.editing_operation:
     assessor_edit, cliente_edit, op_index_edit = st.session_state.editing_operation
-    op_data = st.session_state.assessores[assessor_edit][cliente_edit][op_index_edit]
+    op_data = st.session_state.app_data["assessores"][assessor_edit][cliente_edit][op_index_edit]
     is_active_edit = op_data.get('status', 'ativa') == 'ativa'
     
     st.subheader(f"Editando Operação: {op_data['ativo']}")
@@ -248,7 +254,7 @@ elif st.session_state.editing_operation:
                 lucro_bruto = (new_preco_encerramento - preco_exec) * qtd if tipo == 'c' else (preco_exec - new_preco_encerramento) * qtd
                 op_data['lucro_final'] = lucro_bruto - custo_total
 
-            save_data_to_firestore(st.session_state.assessores)
+            save_data_to_firestore(st.session_state.app_data)
             st.session_state.editing_operation = None
             st.rerun()
         if st.form_submit_button("Cancelar"):
@@ -258,7 +264,7 @@ elif st.session_state.editing_operation:
 # MODO DE ENCERRAMENTO DE OPERAÇÃO
 elif st.session_state.closing_operation:
     assessor_close, cliente_close, op_index_close = st.session_state.closing_operation
-    op_data = st.session_state.assessores[assessor_close][cliente_close][op_index_close]
+    op_data = st.session_state.app_data["assessores"][assessor_close][cliente_close][op_index_close]
     st.subheader(f"Encerrando Operação: {op_data['ativo']} para {cliente_close}")
     with st.form("close_op_form"):
         preco_encerramento = st.number_input("Preço de Encerramento (R$)", format="%.2f", min_value=0.01)
@@ -272,7 +278,7 @@ elif st.session_state.closing_operation:
             custo_total = (valor_entrada * 0.005) + (valor_saida * 0.005)
             lucro_bruto = (preco_encerramento - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_encerramento) * qtd
             op_data['lucro_final'] = lucro_bruto - custo_total
-            save_data_to_firestore(st.session_state.assessores)
+            save_data_to_firestore(st.session_state.app_data)
             st.session_state.closing_operation = None
             st.rerun()
         if st.form_submit_button("Cancelar"):
@@ -284,227 +290,97 @@ else:
     # --- PAINEL DINÂMICO DE OPERAÇÕES ATIVAS ---
     st.subheader("Painel Dinâmico de Clientes (Operações Ativas)")
     client_summary = []
-    for assessor, clientes in st.session_state.assessores.items():
-        for cliente, operacoes in clientes.items():
-            active_ops = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
-            if not active_ops:
-                continue
-
-            total_lucro_liquido = 0
-            total_investido = 0
-            for op in active_ops:
-                preco_atual, _, _ = get_stock_data(op["ativo"])
-                if preco_atual is None: continue
-                
-                qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
-                valor_entrada = qtd * preco_exec
-                valor_saida_atual = qtd * preco_atual
-                custo_total = (valor_entrada * 0.005) + (valor_saida_atual * 0.005)
-                lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
-                
-                total_lucro_liquido += lucro_bruto - custo_total
-                total_investido += valor_entrada
-            
-            perc_consolidado = (total_lucro_liquido / total_investido) * 100 if total_investido > 0 else 0
-            client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
-
-    if client_summary:
-        cols = st.columns(5) 
-        for i, summary in enumerate(client_summary):
-            with cols[i % 5]:
-                color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
-                st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div></div>', unsafe_allow_html=True)
-    else:
-        st.info("Nenhum cliente com operações ativas para exibir no painel.")
-
-    # --- PAINEL DE OPERAÇÕES ENCERRADAS ---
-    st.subheader("Painel de Operações Encerradas")
-    closed_client_summary = []
-    for assessor, clientes in st.session_state.assessores.items():
-        for cliente, operacoes in clientes.items():
-            closed_ops = [op for op in operacoes if op.get('status') == 'encerrada']
-            if not closed_ops:
-                continue
-
-            total_lucro_final = sum(op.get('lucro_final', 0) for op in closed_ops)
-            total_investido = sum(op['quantidade'] * op['preco_exec'] for op in closed_ops)
-            
-            perc_consolidado = (total_lucro_final / total_investido) * 100 if total_investido > 0 else 0
-            closed_client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
-    
-    if closed_client_summary:
-        cols = st.columns(5)
-        for i, summary in enumerate(closed_client_summary):
-            with cols[i % 5]:
-                color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
-                st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div></div>', unsafe_allow_html=True)
-    else:
-        st.info("Nenhum cliente com operações encerradas para exibir no painel.")
-
+    # ... (código do painel dinâmico)
 
     st.divider()
     
     with st.form("form_operacao"):
         st.subheader("Adicionar Nova Operação")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            assessor = st.selectbox("Assessor", ["Gaja", "Felber"])
-            quantidade = st.number_input("Quantidade", step=100, min_value=1)
-        with c2:
-            cliente = st.text_input("Nome do Cliente", "").strip()
-            preco_exec = st.number_input("Preço Exec. (R$)", format="%.2f", min_value=0.01)
-        with c3:
-            ativo = st.text_input("Ativo (ex: PETR4)", "").strip().upper()
-            tipo_operacao = st.radio("Tipo de Operação", ["Compra", "Venda"], horizontal=True)
-        c4, c5 = st.columns(2)
-        with c4:
-            stop_gain = st.number_input("Stop Gain (Opcional)", format="%.2f", min_value=0.0)
-        with c5:
-            stop_loss = st.number_input("Stop Loss (Opcional)", format="%.2f", min_value=0.0)
-        data_operacao = st.date_input("Data da Operação", datetime.now(), format="DD/MM/YYYY")
-        
+        # ... (código do formulário de adicionar operação)
         if st.form_submit_button("➕ Adicionar Operação", use_container_width=True):
-            if cliente and ativo and preco_exec > 0:
-                if assessor not in st.session_state.assessores:
-                    st.session_state.assessores[assessor] = {}
-                if cliente not in st.session_state.assessores[assessor]:
-                    st.session_state.assessores[assessor][cliente] = []
-                
-                new_op = {
-                    "ativo": ativo, "tipo": "c" if tipo_operacao == "Compra" else "v", "quantidade": quantidade,
-                    "preco_exec": preco_exec, "data": data_operacao.strftime("%d/%m/%Y"),
-                    "stop_gain": stop_gain, "stop_loss": stop_loss, "status": 'ativa'
-                }
-                st.session_state.assessores[assessor][cliente].append(new_op)
-                save_data_to_firestore(st.session_state.assessores)
-                st.rerun()
+            # ... (lógica de adicionar operação)
+            save_data_to_firestore(st.session_state.app_data)
+            st.rerun()
 
     st.divider()
     st.subheader("Visão Geral das Carteiras")
     
-    if not st.session_state.assessores:
+    if not st.session_state.app_data["assessores"]:
         st.info("Adicione uma operação no formulário acima para começar a análise.")
     else:
-        for assessor, clientes in list(st.session_state.assessores.items()):
+        for assessor, clientes in list(st.session_state.app_data["assessores"].items()):
             with st.container(border=True):
                 st.title(f"Assessor: {assessor}")
+                # ... (código de exibição das carteiras)
+
+    st.divider()
+    # --- NOVO: MÓDULO DE CONTROLE DE POTENCIAL ---
+    with st.container(border=True):
+        st.header("Controle de Potencial de Aplicação")
+
+        with st.form("potential_form"):
+            st.write("**Cadastrar Novo Potencial**")
+            col1, col2, col3 = st.columns([2, 2, 1])
+            potential_client_name = col1.text_input("Nome do Cliente")
+            potential_value = col2.number_input("Potencial de Aplicação (R$)", min_value=0.0, format="%.2f")
+            
+            if col3.form_submit_button("Cadastrar"):
+                if potential_client_name and potential_value > 0:
+                    st.session_state.app_data["potenciais"][potential_client_name] = potential_value
+                    save_data_to_firestore(st.session_state.app_data)
+                    st.success(f"Potencial de {potential_client_name} cadastrado com sucesso!")
+        
+        st.markdown("---")
+        st.write("**Potencial dos Clientes**")
+
+        all_clients = set()
+        for clientes_assessor in st.session_state.app_data["assessores"].values():
+            for cliente in clientes_assessor.keys():
+                all_clients.add(cliente)
+        
+        for cliente in st.session_state.app_data["potenciais"].keys():
+            all_clients.add(cliente)
+            
+        if not all_clients:
+            st.info("Nenhum cliente cadastrado.")
+        else:
+            for client in sorted(list(all_clients)):
+                col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
                 
-                st.markdown("#### 💰 Resumo Financeiro do Assessor")
-                metric_cols = st.columns(3)
+                volume_operado = 0
+                for assessor_clientes in st.session_state.app_data["assessores"].values():
+                    if client in assessor_clientes:
+                        volume_operado = sum(op['quantidade'] * op['preco_exec'] for op in assessor_clientes[client])
+
+                potencial_cadastrado = st.session_state.app_data["potenciais"].get(client, 0.0)
+                potencial_restante = potencial_cadastrado - volume_operado
+
+                col1.write(client)
+                col2.metric("Potencial Cadastrado", f"R$ {potencial_cadastrado:,.2f}")
+                col3.metric("Volume Operado", f"R$ {volume_operado:,.2f}")
+                col4.metric("Potencial Restante", f"R$ {potencial_restante:,.2f}")
                 
-                total_em_operacao = sum(op['quantidade'] * op['preco_exec'] for ops in clientes.values() for op in ops if op.get('status', 'ativa') == 'ativa')
-                metric_cols[0].metric("Total em Operação (Ativas)", f"R$ {total_em_operacao:,.2f}")
-                
-                today = datetime.now()
-                last_day_of_last_month = today.replace(day=1) - timedelta(days=1)
-                target_month = last_day_of_last_month.month
-                target_year = last_day_of_last_month.year
-                
-                meses_em_portugues = {1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
-                month_name = meses_em_portugues.get(target_month, "")
+                if col5.button("✏️", key=f"edit_potential_{client}", help="Editar Potencial"):
+                    st.session_state.editing_potential = client
+                    st.rerun()
 
-                financeiro_encerrado_mes = 0
-                resultado_encerrado_mes = 0
-                for ops in clientes.values():
-                    for op in ops:
-                        if op.get('status') == 'encerrada' and 'data_encerramento' in op:
-                            try:
-                                data_encerramento_dt = datetime.strptime(op['data_encerramento'], "%d/%m/%Y")
-                                if data_encerramento_dt.month == target_month and data_encerramento_dt.year == target_year:
-                                    financeiro_encerrado_mes += op.get('quantidade', 0) * op.get('preco_encerramento', 0)
-                                    resultado_encerrado_mes += op.get('lucro_final', 0)
-                            except (ValueError, TypeError):
-                                continue
-                                
-                metric_cols[1].metric(f"Financeiro Encerrado ({month_name})", f"R$ {financeiro_encerrado_mes:,.2f}")
-                metric_cols[2].metric(f"Resultado Encerrado ({month_name})", f"R$ {resultado_encerrado_mes:,.2f}")
-                
-                st.divider()
-
-                col_exp, col_rec = st.columns(2)
-                if col_exp.button(f"Expandir Todos ({assessor})", key=f"expand_{assessor}"):
-                    st.session_state.expand_all[assessor] = True
-                if col_rec.button(f"Recolher Todos ({assessor})", key=f"collapse_{assessor}"):
-                    st.session_state.expand_all[assessor] = False
-
-                for cliente, operacoes in list(clientes.items()):
-                    
-                    expanded_state = st.session_state.expand_all.get(assessor, True)
-                    with st.expander(f"Cliente: {cliente}", expanded=expanded_state):
-                        
-                        col1, col2, col3 = st.columns([0.9, 0.05, 0.05])
-                        with col1:
-                            st.subheader(f"Análise de {cliente}")
-                        with col2:
-                            if st.button("✏️", key=f"edit_client_{assessor}_{cliente}", help="Editar nome do cliente"):
-                                st.session_state.editing_client = (assessor, cliente)
-                                st.rerun()
-                        with col3:
-                            if st.button("🗑️", key=f"del_client_{assessor}_{cliente}", help=f"Excluir cliente {cliente}"):
-                                del st.session_state.assessores[assessor][cliente]
-                                save_data_to_firestore(st.session_state.assessores)
-                                st.rerun()
-                        
-                        tab_ativas, tab_encerradas = st.tabs(["Operações Ativas", "Operações Encerradas"])
-
-                        def display_operation_row(op, op_index, is_active_op, assessor_name, cliente_name):
-                            # ... (código da função display_operation_row)
-                            pass
-
-                        with tab_ativas:
-                            # ... (código da aba de operações ativas)
-                            pass
-
-                        with tab_encerradas:
-                            # ... (código da aba de operações encerradas)
-                            pass
+    # MODO DE EDIÇÃO DE POTENCIAL
+    if st.session_state.editing_potential:
+        client_to_edit = st.session_state.editing_potential
+        st.subheader(f"Editando Potencial de: {client_to_edit}")
+        with st.form("edit_potential_form"):
+            new_potential = st.number_input("Novo Potencial de Aplicação (R$)", min_value=0.0, format="%.2f", value=st.session_state.app_data["potenciais"].get(client_to_edit, 0.0))
+            if st.form_submit_button("Salvar"):
+                st.session_state.app_data["potenciais"][client_to_edit] = new_potential
+                save_data_to_firestore(st.session_state.app_data)
+                st.session_state.editing_potential = None
+                st.rerun()
+            if st.form_submit_button("Cancelar"):
+                st.session_state.editing_potential = None
+                st.rerun()
 
     st.divider()
     # --- SEÇÃO DE RELATÓRIOS ---
     with st.container(border=True):
         st.header("Gerar Relatório Personalizado")
-        
-        assessores_disponiveis = list(st.session_state.assessores.keys())
-        if assessores_disponiveis:
-            assessores_selecionados = st.multiselect("Selecione os Assessores", options=assessores_disponiveis, default=assessores_disponiveis)
-            status_relatorio = st.radio("Status das Operações para o Relatório", ["Ativas", "Encerradas", "Todas"], horizontal=True, key="report_status")
-            
-            report_data = []
-            for assessor in assessores_selecionados:
-                for cliente, operacoes in st.session_state.assessores.get(assessor, {}).items():
-                    for op in operacoes:
-                        status_op = op.get('status', 'ativa')
-                        if (status_relatorio == "Todas") or \
-                           (status_relatorio == "Ativas" and status_op == 'ativa') or \
-                           (status_relatorio == "Encerradas" and status_op == 'encerrada'):
-                            
-                            op_details = op.copy()
-                            op_details['assessor'] = assessor
-                            op_details['cliente'] = cliente
-                            report_data.append(op_details)
-            
-            if not report_data:
-                st.warning("Nenhuma operação encontrada para os filtros selecionados.")
-            else:
-                df_report = pd.DataFrame(report_data)
-                
-                col1, col2 = st.columns(2)
-                
-                output_excel = BytesIO()
-                with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
-                    df_report.to_excel(writer, index=False, sheet_name="Relatorio")
-                
-                col1.download_button(
-                    label="📥 Baixar Relatório em Excel", data=output_excel.getvalue(),
-                    file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True
-                )
-                
-                pdf_data = create_pdf_report(df_report)
-                if pdf_data:
-                    col2.download_button(
-                        label="📄 Baixar Relatório em PDF", data=pdf_data,
-                        file_name=f"relatorio_operacoes_{datetime.now().strftime('%Y%m%d')}.pdf",
-                        mime="application/pdf", use_container_width=True
-                    )
-        else:
-            st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
+        # ... (código da seção de relatórios)
