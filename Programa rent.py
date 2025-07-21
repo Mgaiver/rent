@@ -212,6 +212,7 @@ if "app_data" not in st.session_state:
 if "editing_operation" not in st.session_state: st.session_state.editing_operation = None
 if "editing_client" not in st.session_state: st.session_state.editing_client = None
 if "closing_operation" not in st.session_state: st.session_state.closing_operation = None
+if "editing_potential" not in st.session_state: st.session_state.editing_potential = None
 if "expand_all" not in st.session_state: st.session_state.expand_all = {}
 
 
@@ -556,7 +557,7 @@ else:
     st.divider()
     # --- MÓDULO DE CONTROLE DE POTENCIAL ---
     with st.container(border=True):
-        st.header("Controle de Potencial de Aplicação")
+        st.header("Controle de Volume Operado")
         
         all_clients = set()
         for clientes_assessor in st.session_state.app_data["assessores"].values():
@@ -569,6 +570,7 @@ else:
             total_volume_entrada = 0
             total_volume_saida = 0
             
+            st.markdown("##### Volumes por Cliente")
             for client in sorted(list(all_clients)):
                 col1, col2, col3 = st.columns([2, 2, 2])
                 
@@ -590,9 +592,8 @@ else:
             
             st.divider()
             st.subheader("Totais Consolidados")
-            total_cols = st.columns(2)
-            total_cols[0].metric("Soma Total do Volume de Entrada", f"R$ {total_volume_entrada:,.2f}")
-            total_cols[1].metric("Soma Total do Volume de Saída", f"R$ {total_volume_saida:,.2f}")
+            soma_total = total_volume_entrada + total_volume_saida
+            st.metric("Soma Total dos Volumes (Entrada + Saída)", f"R$ {soma_total:,.2f}")
 
     st.divider()
     # --- SEÇÃO DE RELATÓRIOS ---
