@@ -81,6 +81,7 @@ def load_data_from_firestore():
 
 
 # --- FUNÇÃO get_stock_data ---
+@st.cache_data(ttl=60) # Adiciona um cache de 60 segundos para otimizar chamadas
 def get_stock_data(ticker):
     try:
         if not ticker.endswith(".SA"):
@@ -586,18 +587,25 @@ else:
             for client in sorted(list(all_clients)):
                 col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
                 
-                volume_operado = 0
+                volume_entrada = 0
+                volume_saida = 0
                 for assessor_clientes in st.session_state.app_data["assessores"].values():
                     if client in assessor_clientes:
-                        volume_operado = sum(op['quantidade'] * op['preco_exec'] for op in assessor_clientes[client])
+                        for op in assessor_clientes[client]:
+                            volume_entrada += op['quantidade'] * op['preco_exec']
+                            if op.get('status') == 'encerrada':
+                                volume_saida += op['quantidade'] * op.get('preco_encerramento', 0)
+                            else: # Ativa
+                                preco_atual, _, _ = get_stock_data(op["ativo"])
+                                if preco_atual:
+                                    volume_saida += op['quantidade'] * preco_atual
 
                 potencial_cadastrado = st.session_state.app_data["potenciais"].get(client, 0.0)
-                potencial_restante = potencial_cadastrado - volume_operado
 
                 col1.write(client)
                 col2.metric("Potencial Cadastrado", f"R$ {potencial_cadastrado:,.2f}")
-                col3.metric("Volume Operado", f"R$ {volume_operado:,.2f}")
-                col4.metric("Potencial Restante", f"R$ {potencial_restante:,.2f}")
+                col3.metric("Volume de Entrada", f"R$ {volume_entrada:,.2f}")
+                col4.metric("Volume de Saída", f"R$ {volume_saida:,.2f}")
                 
                 if col5.button("✏️", key=f"edit_potential_{client}", help="Editar Potencial"):
                     st.session_state.editing_potential = client
