@@ -329,7 +329,6 @@ else:
                 total_lucro_entry_fee += lucro_bruto - custo_entrada
                 total_investido += valor_entrada
                 
-                # Calcula dias em aberto
                 try:
                     data_op = datetime.strptime(op["data"], "%d/%m/%Y")
                     dias_em_aberto.append((datetime.now() - data_op).days)
@@ -552,6 +551,72 @@ else:
                                 for i, op in enumerate(operacoes):
                                     if op.get('status') == 'encerrada':
                                         display_operation_row(op, i, False, assessor, cliente)
+
+    st.divider()
+    # --- MÓDULO DE CONTROLE DE POTENCIAL ---
+    with st.container(border=True):
+        st.header("Controle de Potencial de Aplicação")
+
+        with st.form("potential_form"):
+            st.write("**Cadastrar Novo Potencial**")
+            col1, col2, col3 = st.columns([2, 2, 1])
+            potential_client_name = col1.text_input("Nome do Cliente")
+            potential_value = col2.number_input("Potencial de Aplicação (R$)", min_value=0.0, format="%.2f")
+            
+            if col3.form_submit_button("Cadastrar"):
+                if potential_client_name and potential_value > 0:
+                    st.session_state.app_data["potenciais"][potential_client_name] = potential_value
+                    save_data_to_firestore(st.session_state.app_data)
+                    st.success(f"Potencial de {potential_client_name} cadastrado com sucesso!")
+        
+        st.markdown("---")
+        st.write("**Potencial dos Clientes**")
+
+        all_clients = set()
+        for clientes_assessor in st.session_state.app_data["assessores"].values():
+            for cliente in clientes_assessor.keys():
+                all_clients.add(cliente)
+        
+        for cliente in st.session_state.app_data["potenciais"].keys():
+            all_clients.add(cliente)
+            
+        if not all_clients:
+            st.info("Nenhum cliente cadastrado.")
+        else:
+            for client in sorted(list(all_clients)):
+                col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
+                
+                volume_operado = 0
+                for assessor_clientes in st.session_state.app_data["assessores"].values():
+                    if client in assessor_clientes:
+                        volume_operado = sum(op['quantidade'] * op['preco_exec'] for op in assessor_clientes[client])
+
+                potencial_cadastrado = st.session_state.app_data["potenciais"].get(client, 0.0)
+                potencial_restante = potencial_cadastrado - volume_operado
+
+                col1.write(client)
+                col2.metric("Potencial Cadastrado", f"R$ {potencial_cadastrado:,.2f}")
+                col3.metric("Volume Operado", f"R$ {volume_operado:,.2f}")
+                col4.metric("Potencial Restante", f"R$ {potencial_restante:,.2f}")
+                
+                if col5.button("✏️", key=f"edit_potential_{client}", help="Editar Potencial"):
+                    st.session_state.editing_potential = client
+                    st.rerun()
+
+    # MODO DE EDIÇÃO DE POTENCIAL
+    if st.session_state.editing_potential:
+        client_to_edit = st.session_state.editing_potential
+        st.subheader(f"Editando Potencial de: {client_to_edit}")
+        with st.form("edit_potential_form"):
+            new_potential = st.number_input("Novo Potencial de Aplicação (R$)", min_value=0.0, format="%.2f", value=st.session_state.app_data["potenciais"].get(client_to_edit, 0.0))
+            if st.form_submit_button("Salvar"):
+                st.session_state.app_data["potenciais"][client_to_edit] = new_potential
+                save_data_to_firestore(st.session_state.app_data)
+                st.session_state.editing_potential = None
+                st.rerun()
+            if st.form_submit_button("Cancelar"):
+                st.session_state.editing_potential = None
+                st.rerun()
 
     st.divider()
     # --- SEÇÃO DE RELATÓRIOS ---
