@@ -31,7 +31,6 @@ except ImportError:
 # --- Configurações da Página ---
 st.set_page_config(page_title="Acompanhamento de Long & Short", layout="wide")
 
-
 # --- LÓGICA DE AUTENTICAÇÃO ---
 def check_password():
     """Retorna True se o usuário inseriu a senha correta."""
@@ -671,13 +670,3 @@ else:
                     )
         else:
             st.info("Nenhum assessor com operações cadastradas para gerar relatório.")
-
-# --- PONTO DE ENTRADA DO APP ---
-if __name__ == "__main__":
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
-
-    if not st.session_state["password_correct"]:
-        show_login_form()
-    else:
-        main_app()
