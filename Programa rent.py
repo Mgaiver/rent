@@ -30,39 +30,9 @@ except ImportError:
 
 # --- Configurações da Página ---
 st.set_page_config(page_title="Acompanhamento de Long & Short", layout="wide")
-
-# --- LÓGICA DE AUTENTICAÇÃO ---
-def check_password():
-    """Retorna True se o usuário inseriu a senha correta."""
-    try:
-        correct_password = st.secrets["app_credentials"]["password"]
-    except (KeyError, AttributeError):
-        st.error("Senha do aplicativo não configurada nos segredos (secrets).")
-        return False
-
-    if st.session_state.get("password_correct", False):
-        return True
-
-    with st.form("password_form"):
-        st.title("Login")
-        st.write("Por favor, insira a senha para aceder ao painel.")
-        password = st.text_input("Senha", type="password")
-        submitted = st.form_submit_button("Entrar")
-
-        if submitted:
-            if password == correct_password:
-                st.session_state["password_correct"] = True
-                st.rerun()
-            else:
-                st.error("Senha incorreta.")
-    return False
-
-if not check_password():
-    st.stop()
-
-# --- O RESTANTE DO APP SÓ É EXECUTADO APÓS A AUTENTICAÇÃO ---
-
 st.title("🔁 Acompanhamento de Long & Short")
+
+# --- Atualização Automática ---
 st_autorefresh(interval=30000, key="datarefresh")
 
 
@@ -87,10 +57,11 @@ def save_data_to_firestore(data):
     try:
         doc_ref = db_client.collection(COLLECTION_NAME).document(DOC_ID_NEW)
         serializable_data = json.loads(json.dumps(data, default=str))
-        doc_ref.set(serializable_data)
+        doc_ref.set(serializable_data) # Salva o dicionário completo
     except Exception as e:
         st.error(f"Erro ao salvar no Firestore: {e}")
 
+# --- FUNÇÃO DE CARREGAMENTO COM MIGRAÇÃO ROBUSTA ---
 def load_data_from_firestore():
     if db_client is None: return {"assessores": {}, "potenciais": {}}
     try:
@@ -98,8 +69,10 @@ def load_data_from_firestore():
         doc = doc_ref.get()
         if doc.exists:
             data = doc.to_dict()
-            if "assessores" not in data: data["assessores"] = {}
-            if "potenciais" not in data: data["potenciais"] = {}
+            if "assessores" not in data:
+                data["assessores"] = {}
+            if "potenciais" not in data:
+                data["potenciais"] = {}
             return data
         return {"assessores": {}, "potenciais": {}}
     except Exception as e:
@@ -108,7 +81,7 @@ def load_data_from_firestore():
 
 
 # --- FUNÇÃO get_stock_data ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=60) # Adiciona um cache de 60 segundos para otimizar chamadas
 def get_stock_data(ticker):
     try:
         if not ticker.endswith(".SA"):
@@ -277,13 +250,15 @@ elif st.session_state.editing_operation:
             current_data_encerramento = datetime.strptime(op_data.get('data_encerramento'), "%d/%m/%Y") if op_data.get('data_encerramento') else datetime.now()
             new_data_encerramento = st.date_input("Data de Encerramento", value=current_data_encerramento, format="DD/MM/YYYY")
         else:
-            new_stop_gain = st.number_input("Stop Gain", format="%.2f", min_value=0.0, value=op_data.get('stop_gain', 0.0))
-            new_stop_loss = st.number_input("Stop Loss", format="%.2f", min_value=0.0, value=op_data.get('stop_loss', 0.0))
+            stop_gain_perc = st.number_input("Stop Gain (%)", format="%.2f", min_value=0.0)
+            stop_loss_perc = st.number_input("Stop Loss (%)", format="%.2f", min_value=0.0)
 
         if st.form_submit_button("Salvar"):
             op_data.update({'quantidade': new_quantidade, 'preco_exec': new_preco_exec})
             if is_active_edit:
-                op_data.update({'stop_gain': new_stop_gain, 'stop_loss': new_stop_loss})
+                sg_price = new_preco_exec * (1 + stop_gain_perc / 100) if stop_gain_perc > 0 else 0
+                sl_price = new_preco_exec * (1 - stop_loss_perc / 100) if stop_loss_perc > 0 else 0
+                op_data.update({'stop_gain': sg_price, 'stop_loss': sl_price})
             else:
                 op_data.update({'preco_encerramento': new_preco_encerramento, 'data_encerramento': new_data_encerramento.strftime("%d/%m/%Y")})
                 qtd, preco_exec, tipo = op_data["quantidade"], op_data["preco_exec"], op_data["tipo"]
@@ -406,9 +381,9 @@ else:
             tipo_operacao = st.radio("Tipo de Operação", ["Compra", "Venda"], horizontal=True)
         c4, c5 = st.columns(2)
         with c4:
-            stop_gain = st.number_input("Stop Gain (Opcional)", format="%.2f", min_value=0.0)
+            stop_gain_perc = st.number_input("Stop Gain (%)", format="%.2f", min_value=0.0)
         with c5:
-            stop_loss = st.number_input("Stop Loss (Opcional)", format="%.2f", min_value=0.0)
+            stop_loss_perc = st.number_input("Stop Loss (%)", format="%.2f", min_value=0.0)
         data_operacao = st.date_input("Data da Operação", datetime.now(), format="DD/MM/YYYY")
         
         if st.form_submit_button("➕ Adicionar Operação", use_container_width=True):
@@ -418,6 +393,14 @@ else:
                 if cliente not in st.session_state.app_data["assessores"][assessor]:
                     st.session_state.app_data["assessores"][assessor][cliente] = []
                 
+                # CÁLCULO DOS PREÇOS DE STOP
+                if tipo_operacao == "Compra":
+                    stop_gain = preco_exec * (1 + stop_gain_perc / 100) if stop_gain_perc > 0 else 0
+                    stop_loss = preco_exec * (1 - stop_loss_perc / 100) if stop_loss_perc > 0 else 0
+                else: # Venda
+                    stop_gain = preco_exec * (1 - stop_gain_perc / 100) if stop_gain_perc > 0 else 0
+                    stop_loss = preco_exec * (1 + stop_loss_perc / 100) if stop_loss_perc > 0 else 0
+
                 new_op = {
                     "ativo": ativo, "tipo": "c" if tipo_operacao == "Compra" else "v", "quantidade": quantidade,
                     "preco_exec": preco_exec, "data": data_operacao.strftime("%d/%m/%Y"),
