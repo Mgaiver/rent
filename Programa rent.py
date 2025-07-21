@@ -30,6 +30,43 @@ except ImportError:
 
 # --- Configurações da Página ---
 st.set_page_config(page_title="Acompanhamento de Long & Short", layout="wide")
+
+
+# --- LÓGICA DE AUTENTICAÇÃO ---
+def check_password():
+    """Retorna True se o usuário inseriu a senha correta."""
+
+    # 1. Tenta pegar a senha dos segredos do Streamlit
+    try:
+        correct_password = st.secrets["app_credentials"]["password"]
+    except (KeyError, AttributeError):
+        st.error("Senha do aplicativo não configurada nos segredos (secrets).")
+        return False
+
+    # 2. Verifica se a senha já foi validada na sessão
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # 3. Mostra o formulário de senha
+    with st.form("password_form"):
+        st.title("Login")
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar")
+
+        if submitted:
+            if password == correct_password:
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.error("Senha incorreta.")
+    return False
+
+# --- INÍCIO DA EXECUÇÃO DO APP ---
+
+if not check_password():
+    st.stop() # Não renderiza o resto do app se a senha estiver incorreta
+
+# O restante do código do aplicativo só é executado se a senha for correta.
 st.title("🔁 Acompanhamento de Long & Short")
 
 # --- Atualização Automática ---
@@ -69,7 +106,6 @@ def load_data_from_firestore():
         doc = doc_ref.get()
         if doc.exists:
             data = doc.to_dict()
-            # Garante que as chaves principais sempre existam
             if "assessores" not in data:
                 data["assessores"] = {}
             if "potenciais" not in data:
