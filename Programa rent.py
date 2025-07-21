@@ -170,7 +170,7 @@ st.markdown("""
     .linha-encerrada { background-color: rgba(108, 117, 125, 0.15); border-left: 5px solid #6c757d; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
     
     .metric-card {
-        padding: 15px;
+        padding: 10px;
         border-radius: 10px;
         color: white;
         text-align: center;
@@ -183,12 +183,17 @@ st.markdown("""
         background-color: #dc3545;
     }
     .metric-card .label {
-        font-size: 1em;
+        font-size: 0.9em;
         font-weight: bold;
     }
     .metric-card .value {
-        font-size: 1.5em;
+        font-size: 1.4em;
         font-weight: bolder;
+    }
+    .metric-card .days {
+        font-size: 0.8em;
+        opacity: 0.8;
+        font-weight: normal;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -229,7 +234,7 @@ if st.session_state.editing_client:
 
 # MODO DE EDIÇÃO DE OPERAÇÃO
 elif st.session_state.editing_operation:
-    assessor_edit, cliente_edit, op_index_edit = st.session_state.app_data["editing_operation"]
+    assessor_edit, cliente_edit, op_index_edit = st.session_state.editing_operation
     op_data = st.session_state.app_data["assessores"][assessor_edit][cliente_edit][op_index_edit]
     is_active_edit = op_data.get('status', 'ativa') == 'ativa'
     
@@ -306,6 +311,8 @@ else:
             total_lucro_liquido = 0
             total_lucro_entry_fee = 0
             total_investido = 0
+            dias_em_aberto = []
+
             for op in active_ops:
                 preco_atual, _, _ = get_stock_data(op["ativo"])
                 if preco_atual is None: continue
@@ -321,19 +328,27 @@ else:
                 total_lucro_liquido += lucro_bruto - custo_total
                 total_lucro_entry_fee += lucro_bruto - custo_entrada
                 total_investido += valor_entrada
+                
+                # Calcula dias em aberto
+                try:
+                    data_op = datetime.strptime(op["data"], "%d/%m/%Y")
+                    dias_em_aberto.append((datetime.now() - data_op).days)
+                except (ValueError, TypeError):
+                    dias_em_aberto.append(0)
             
+            avg_days = sum(dias_em_aberto) / len(dias_em_aberto) if dias_em_aberto else 0
             perc_consolidado = (total_lucro_liquido / total_investido) * 100 if total_investido > 0 else 0
-            client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
+            client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado, "dias": avg_days})
             
             perc_consolidado_entry_fee = (total_lucro_entry_fee / total_investido) * 100 if total_investido > 0 else 0
-            client_summary_entry_fee.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado_entry_fee})
+            client_summary_entry_fee.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado_entry_fee, "dias": avg_days})
 
     if client_summary:
         cols = st.columns(5) 
         for i, summary in enumerate(client_summary):
             with cols[i % 5]:
                 color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
-                st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div><div class="days">{summary["dias"]:.0f} dias</div></div>', unsafe_allow_html=True)
     else:
         st.info("Nenhum cliente com operações ativas para exibir no painel.")
 
@@ -343,7 +358,7 @@ else:
         for i, summary in enumerate(client_summary_entry_fee):
             with cols[i % 5]:
                 color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
-                st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div><div class="days">{summary["dias"]:.0f} dias</div></div>', unsafe_allow_html=True)
     else:
         st.info("Nenhum cliente com operações ativas para exibir no painel.")
 
