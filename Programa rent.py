@@ -30,43 +30,6 @@ except ImportError:
 
 # --- Configurações da Página ---
 st.set_page_config(page_title="Acompanhamento de Long & Short", layout="wide")
-
-
-# --- LÓGICA DE AUTENTICAÇÃO ---
-def check_password():
-    """Retorna True se o usuário inseriu a senha correta."""
-
-    # 1. Tenta pegar a senha dos segredos do Streamlit
-    try:
-        correct_password = st.secrets["app_credentials"]["password"]
-    except (KeyError, AttributeError):
-        st.error("Senha do aplicativo não configurada nos segredos (secrets).")
-        return False
-
-    # 2. Verifica se a senha já foi validada na sessão
-    if st.session_state.get("password_correct", False):
-        return True
-
-    # 3. Mostra o formulário de senha
-    with st.form("password_form"):
-        st.title("Login")
-        password = st.text_input("Senha", type="password")
-        submitted = st.form_submit_button("Entrar")
-
-        if submitted:
-            if password == correct_password:
-                st.session_state["password_correct"] = True
-                st.rerun()
-            else:
-                st.error("Senha incorreta.")
-    return False
-
-# --- INÍCIO DA EXECUÇÃO DO APP ---
-
-if not check_password():
-    st.stop() # Não renderiza o resto do app se a senha estiver incorreta
-
-# O restante do código do aplicativo só é executado se a senha for correta.
 st.title("🔁 Acompanhamento de Long & Short")
 
 # --- Atualização Automática ---
@@ -266,7 +229,7 @@ if st.session_state.editing_client:
 
 # MODO DE EDIÇÃO DE OPERAÇÃO
 elif st.session_state.editing_operation:
-    assessor_edit, cliente_edit, op_index_edit = st.session_state.editing_operation
+    assessor_edit, cliente_edit, op_index_edit = st.session_state.app_data["editing_operation"]
     op_data = st.session_state.app_data["assessores"][assessor_edit][cliente_edit][op_index_edit]
     is_active_edit = op_data.get('status', 'ativa') == 'ativa'
     
@@ -330,8 +293,10 @@ elif st.session_state.closing_operation:
 # MODO NORMAL (TELA PRINCIPAL)
 else:
     # --- PAINEL DINÂMICO DE OPERAÇÕES ATIVAS ---
-    st.subheader("Painel Dinâmico de Clientes (Operações Ativas)")
+    st.subheader("Painel Dinâmico (Resultado Líquido - Taxas de Entrada e Saída)")
     client_summary = []
+    client_summary_entry_fee = []
+
     for assessor, clientes in st.session_state.app_data["assessores"].items():
         for cliente, operacoes in clientes.items():
             active_ops = [op for op in operacoes if op.get('status', 'ativa') == 'ativa']
@@ -339,6 +304,7 @@ else:
                 continue
 
             total_lucro_liquido = 0
+            total_lucro_entry_fee = 0
             total_investido = 0
             for op in active_ops:
                 preco_atual, _, _ = get_stock_data(op["ativo"])
@@ -347,14 +313,20 @@ else:
                 qtd, preco_exec, tipo = op["quantidade"], op["preco_exec"], op["tipo"]
                 valor_entrada = qtd * preco_exec
                 valor_saida_atual = qtd * preco_atual
-                custo_total = (valor_entrada * 0.005) + (valor_saida_atual * 0.005)
+                custo_entrada = valor_entrada * 0.005
+                custo_saida = valor_saida_atual * 0.005
+                custo_total = custo_entrada + custo_saida
                 lucro_bruto = (preco_atual - preco_exec) * qtd if tipo == 'c' else (preco_exec - preco_atual) * qtd
                 
                 total_lucro_liquido += lucro_bruto - custo_total
+                total_lucro_entry_fee += lucro_bruto - custo_entrada
                 total_investido += valor_entrada
             
             perc_consolidado = (total_lucro_liquido / total_investido) * 100 if total_investido > 0 else 0
             client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
+            
+            perc_consolidado_entry_fee = (total_lucro_entry_fee / total_investido) * 100 if total_investido > 0 else 0
+            client_summary_entry_fee.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado_entry_fee})
 
     if client_summary:
         cols = st.columns(5) 
@@ -365,45 +337,15 @@ else:
     else:
         st.info("Nenhum cliente com operações ativas para exibir no painel.")
 
-    # --- PAINEL DE OPERAÇÕES ENCERRADAS ---
-    today = datetime.now()
-    last_day_of_last_month = today.replace(day=1) - timedelta(days=1)
-    target_month = last_day_of_last_month.month
-    target_year = last_day_of_last_month.year
-    meses_em_portugues = {1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
-    month_name = meses_em_portugues.get(target_month, "")
-    
-    st.subheader(f"Painel de Operações Encerradas ({month_name})")
-    closed_client_summary = []
-    for assessor, clientes in st.session_state.app_data["assessores"].items():
-        for cliente, operacoes in clientes.items():
-            closed_ops_last_month = []
-            for op in operacoes:
-                if op.get('status') == 'encerrada' and 'data_encerramento' in op:
-                    try:
-                        data_encerramento_dt = datetime.strptime(op['data_encerramento'], "%d/%m/%Y")
-                        if data_encerramento_dt.month == target_month and data_encerramento_dt.year == target_year:
-                            closed_ops_last_month.append(op)
-                    except (ValueError, TypeError):
-                        continue
-            
-            if not closed_ops_last_month:
-                continue
-
-            total_lucro_final = sum(op.get('lucro_final', 0) for op in closed_ops_last_month)
-            total_investido = sum(op['quantidade'] * op['preco_exec'] for op in closed_ops_last_month)
-            
-            perc_consolidado = (total_lucro_final / total_investido) * 100 if total_investido > 0 else 0
-            closed_client_summary.append({"cliente": f"{cliente} ({assessor})", "resultado": perc_consolidado})
-    
-    if closed_client_summary:
+    st.subheader("Painel Dinâmico (Resultado com Taxa de Entrada)")
+    if client_summary_entry_fee:
         cols = st.columns(5)
-        for i, summary in enumerate(closed_client_summary):
+        for i, summary in enumerate(client_summary_entry_fee):
             with cols[i % 5]:
                 color_class = "metric-card-green" if summary['resultado'] >= 0 else "metric-card-red"
                 st.markdown(f'<div class="metric-card {color_class}"><div class="label">{summary["cliente"]}</div><div class="value">{summary["resultado"]:.2f}%</div></div>', unsafe_allow_html=True)
     else:
-        st.info(f"Nenhum cliente com operações encerradas em {month_name} para exibir no painel.")
+        st.info("Nenhum cliente com operações ativas para exibir no painel.")
 
 
     st.divider()
@@ -463,6 +405,14 @@ else:
                 )
                 metric_cols[0].metric("Total em Operação (Ativas)", f"R$ {total_em_operacao:,.2f}")
                 
+                today = datetime.now()
+                last_day_of_last_month = today.replace(day=1) - timedelta(days=1)
+                target_month = last_day_of_last_month.month
+                target_year = last_day_of_last_month.year
+                
+                meses_em_portugues = {1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
+                month_name = meses_em_portugues.get(target_month, "")
+
                 financeiro_encerrado_mes = 0
                 resultado_encerrado_mes = 0
                 for ops in clientes.values():
