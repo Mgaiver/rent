@@ -71,6 +71,7 @@ def load_data_from_firestore():
             data = doc.to_dict()
             if "assessores" not in data:
                 data["assessores"] = {}
+            # Mantém a chave 'potenciais' por retrocompatibilidade, mas não a usamos mais ativamente
             if "potenciais" not in data:
                 data["potenciais"] = {}
             return data
@@ -211,7 +212,6 @@ if "app_data" not in st.session_state:
 if "editing_operation" not in st.session_state: st.session_state.editing_operation = None
 if "editing_client" not in st.session_state: st.session_state.editing_client = None
 if "closing_operation" not in st.session_state: st.session_state.closing_operation = None
-if "editing_potential" not in st.session_state: st.session_state.editing_potential = None
 if "expand_all" not in st.session_state: st.session_state.expand_all = {}
 
 
@@ -557,35 +557,20 @@ else:
     # --- MÓDULO DE CONTROLE DE POTENCIAL ---
     with st.container(border=True):
         st.header("Controle de Potencial de Aplicação")
-
-        with st.form("potential_form"):
-            st.write("**Cadastrar Novo Potencial**")
-            col1, col2, col3 = st.columns([2, 2, 1])
-            potential_client_name = col1.text_input("Nome do Cliente")
-            potential_value = col2.number_input("Potencial de Aplicação (R$)", min_value=0.0, format="%.2f")
-            
-            if col3.form_submit_button("Cadastrar"):
-                if potential_client_name and potential_value > 0:
-                    st.session_state.app_data["potenciais"][potential_client_name] = potential_value
-                    save_data_to_firestore(st.session_state.app_data)
-                    st.success(f"Potencial de {potential_client_name} cadastrado com sucesso!")
         
-        st.markdown("---")
-        st.write("**Potencial dos Clientes**")
-
         all_clients = set()
         for clientes_assessor in st.session_state.app_data["assessores"].values():
             for cliente in clientes_assessor.keys():
                 all_clients.add(cliente)
         
-        for cliente in st.session_state.app_data["potenciais"].keys():
-            all_clients.add(cliente)
-            
         if not all_clients:
-            st.info("Nenhum cliente cadastrado.")
+            st.info("Nenhum cliente com operações cadastradas.")
         else:
+            total_volume_entrada = 0
+            total_volume_saida = 0
+            
             for client in sorted(list(all_clients)):
-                col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
+                col1, col2, col3 = st.columns([2, 2, 2])
                 
                 volume_entrada = 0
                 volume_saida = 0
@@ -595,32 +580,19 @@ else:
                             volume_entrada += op['quantidade'] * op['preco_exec']
                             if op.get('status') == 'encerrada':
                                 volume_saida += op['quantidade'] * op.get('preco_encerramento', 0)
-
-                potencial_cadastrado = st.session_state.app_data["potenciais"].get(client, 0.0)
+                
+                total_volume_entrada += volume_entrada
+                total_volume_saida += volume_saida
 
                 col1.write(client)
-                col2.metric("Potencial Cadastrado", f"R$ {potencial_cadastrado:,.2f}")
-                col3.metric("Volume de Entrada", f"R$ {volume_entrada:,.2f}")
-                col4.metric("Volume de Saída (Encerradas)", f"R$ {volume_saida:,.2f}")
-                
-                if col5.button("✏️", key=f"edit_potential_{client}", help="Editar Potencial"):
-                    st.session_state.editing_potential = client
-                    st.rerun()
-
-    # MODO DE EDIÇÃO DE POTENCIAL
-    if st.session_state.editing_potential:
-        client_to_edit = st.session_state.editing_potential
-        st.subheader(f"Editando Potencial de: {client_to_edit}")
-        with st.form("edit_potential_form"):
-            new_potential = st.number_input("Novo Potencial de Aplicação (R$)", min_value=0.0, format="%.2f", value=st.session_state.app_data["potenciais"].get(client_to_edit, 0.0))
-            if st.form_submit_button("Salvar"):
-                st.session_state.app_data["potenciais"][client_to_edit] = new_potential
-                save_data_to_firestore(st.session_state.app_data)
-                st.session_state.editing_potential = None
-                st.rerun()
-            if st.form_submit_button("Cancelar"):
-                st.session_state.editing_potential = None
-                st.rerun()
+                col2.metric("Volume de Entrada", f"R$ {volume_entrada:,.2f}")
+                col3.metric("Volume de Saída (Encerradas)", f"R$ {volume_saida:,.2f}")
+            
+            st.divider()
+            st.subheader("Totais Consolidados")
+            total_cols = st.columns(2)
+            total_cols[0].metric("Soma Total do Volume de Entrada", f"R$ {total_volume_entrada:,.2f}")
+            total_cols[1].metric("Soma Total do Volume de Saída", f"R$ {total_volume_saida:,.2f}")
 
     st.divider()
     # --- SEÇÃO DE RELATÓRIOS ---
