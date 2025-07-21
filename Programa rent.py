@@ -595,17 +595,13 @@ else:
                             volume_entrada += op['quantidade'] * op['preco_exec']
                             if op.get('status') == 'encerrada':
                                 volume_saida += op['quantidade'] * op.get('preco_encerramento', 0)
-                            else: # Ativa
-                                preco_atual, _, _ = get_stock_data(op["ativo"])
-                                if preco_atual:
-                                    volume_saida += op['quantidade'] * preco_atual
 
                 potencial_cadastrado = st.session_state.app_data["potenciais"].get(client, 0.0)
 
                 col1.write(client)
                 col2.metric("Potencial Cadastrado", f"R$ {potencial_cadastrado:,.2f}")
                 col3.metric("Volume de Entrada", f"R$ {volume_entrada:,.2f}")
-                col4.metric("Volume de Saída", f"R$ {volume_saida:,.2f}")
+                col4.metric("Volume de Saída (Encerradas)", f"R$ {volume_saida:,.2f}")
                 
                 if col5.button("✏️", key=f"edit_potential_{client}", help="Editar Potencial"):
                     st.session_state.editing_potential = client
